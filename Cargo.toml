@@ -1,5 +1,5 @@
 [workspace]
-members = ["neuro-ash", "village-sim"]
+members = ["neuro-ash", "town-hall"]
 resolver = "3"
 
 [workspace.package]
@@ -8,4 +8,4 @@ edition = "2024"
 [workspace.dependencies]
 anyhow = "1"
 neuro-ash = { path = "neuro-ash" }
-tensor-ash = { path = "../tensor-ash" }
+tensor-ash = { git = "https://github.com/gusahlg/tensor-ash.git", rev = "e9fc7c61d7fb8707a1cf6b4dfb9cc11710c1e9a3" }

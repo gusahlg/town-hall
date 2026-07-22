@@ -1,5 +1,5 @@
 {
-  description = "town-hall simulation development and runtime environment";
+  description = "town-hall development and runtime environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -49,7 +49,7 @@
               export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d''${VK_LAYER_PATH:+:''${VK_LAYER_PATH}}"
 
               echo "town-hall shell: Rust, shaderc, and Vulkan tools are ready."
-              echo "Run the simulation with: cargo run --release -p village-sim"
+              echo "Run town-hall with: cargo run --release -p town-hall"
             '';
           };
         }

@@ -25,6 +25,7 @@ pub struct Entity {
     owners: Option<EntityId>,
     id: EntityId,
     last_action: Action,
+    preference: Preference,
 }
 
 impl Entity {
@@ -35,6 +36,10 @@ impl Entity {
             owners,
             id,
             last_action: Action::Conserve,
+            // Preference should be pseud-random and need should be updated regularly due to
+            // different events.
+            preference: Preference { preferences: vec![vec![55, 72, 241], vec![0, 32, 593, 45]], 
+                needs: vec![Need {target: vec![0], intensity: 0.95, recovery_rate: 5.0 }, Need {target: vec![3, 8], intensity: 1.0, recovery_rate: 10.0 }] },
         }
     }
 
@@ -70,4 +75,18 @@ impl Entity {
     pub(crate) fn set_last_action(&mut self, action: Action) {
         self.last_action = action;
     }
+}
+
+#[derive(Debug, Clone)]
+struct Preference {
+    // Each u16 maps to a resource in resources
+    preferences: Vec<Vec<u16>>,
+    pub needs: Vec<Need>,
+}
+
+#[derive(Debug, Clone)]
+struct Need {
+    target: Vec<u16>,
+    intensity: f32, // 0..1
+    recovery_rate: f32,
 }

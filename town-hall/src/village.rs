@@ -13,6 +13,7 @@ use crate::{
     KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT,
     PREDICT_OUTPUT_START, ReaderKind, ReaderPool, STARTING_POPULATION, give_output, predict_output,
 };
+use crate::Market;
 
 const INITIAL_ENTITY_RESOURCES: u64 = 100;
 const INITIAL_WORLD_RESOURCES: u128 = 1_000;
@@ -68,7 +69,10 @@ pub struct Village {
     random: Random,
     next_entity_id: u128,
     iterations: u128,
-    resources: u128,
+    // Immutable representation of market metadata
+    market: Market,
+    // Resources (described in market) distribution over a map
+    world: World,
     growth_rate: u64,
 }
 
@@ -101,7 +105,8 @@ impl Village {
             random,
             next_entity_id: 0,
             iterations: 0,
-            resources: INITIAL_WORLD_RESOURCES,
+            market: Market::default(),
+            world: world::generate(),
             growth_rate: INITIAL_GROWTH_RATE,
         };
         for _ in 0..population {
@@ -139,10 +144,6 @@ impl Village {
     pub fn iterations(&self) -> u128 {
         self.iterations
     }
-
-    #[inline]
-    pub fn resources(&self) -> u128 {
-        self.resources
     }
 
     #[inline]

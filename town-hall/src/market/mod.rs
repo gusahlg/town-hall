@@ -1,6 +1,6 @@
 //! This file describes all the mechanics regarding markets and trade.
 mod resources;
-use resources::*;
+pub use resources::*;
 
 mod goods;
 pub use goods::*;

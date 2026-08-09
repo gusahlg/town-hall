@@ -12,8 +12,8 @@ use crate::{
     DEFAULT_RANDOM_SEED, Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START,
     KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT,
     PREDICT_OUTPUT_START, ReaderKind, ReaderPool, STARTING_POPULATION, give_output, predict_output,
+    Market, World,
 };
-use crate::Market;
 
 const INITIAL_ENTITY_RESOURCES: u64 = 100;
 const INITIAL_WORLD_RESOURCES: u128 = 1_000;

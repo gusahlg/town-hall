@@ -1,6 +1,8 @@
 //! This file defines what a good is.
 use dimension_macro::dimensions;
 
+use super::Quantity;
+
 // Defines the resource type as well as a DIMENSIONS constant
 dimensions!(100);
 
@@ -18,7 +20,7 @@ impl Resources {
         }
     }
 
-    pub fn distance(&self, r1: u16, r2: u16) -> u16 {
+    pub fn distance(&self, r1: ResourceId, r2: ResourceId) -> ResourceId {
         let r1 = self.get_position(r1);
         let r2 = self.get_position(r2);
         let distance = r1
@@ -30,7 +32,7 @@ impl Resources {
         u16::try_from(distance).expect("resource distance does not fit in a u16")
     }
 
-    fn get_position(&self, resource: u16) -> [usize; DIMENSIONS] {
+    fn get_position(&self, resource: ResourceId) -> [usize; DIMENSIONS] {
         let mut position = [0; DIMENSIONS];
 
         self.resources
@@ -39,6 +41,9 @@ impl Resources {
             .unwrap_or_else(|| panic!("resource {resource} does not exist"))
     }
 }
+
+pub type ResourceQuantity = (ResourceId, Quantity);
+pub type ResourceId = u16;
 
 impl Default for Resources {
     fn default() -> Self {

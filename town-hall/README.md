@@ -1,19 +1,12 @@
 # town-hall
 
-`town-hall` owns entities, stable IDs, wealth ranking, fixed known-person slots,
-Monomial-NFN readers, connection generation, action decoding, and synchronous
-world updates.
+`town-hall` owns canonical resources, goods, needs, recipes, processes,
+inventories, entities, world deposits, and synchronous tick orchestration.
 
-The key invariant is that population index aligns the entity row, known-person
-row, action brain, Monomial reader, and get-to-know brain. Birth pushes one random
-row to every pool; death swap-removes the same row everywhere and repairs the
-stable-ID lookup.
+Population rows remain aligned with known-person rows, action brains, Monomial
+readers, and get-to-know brains. `Village::step` learns slot replacements from a
+stable snapshot, installs generated connections atomically, evaluates actions,
+and applies the temporary action adapter synchronously through any
+`neuro_ash::BatchEvaluator`.
 
-`Village::step` performs ranking, slot replacement, whole-brain reading,
-get-to-know inference, atomic neural patches, action inference, and staged world
-application. It accepts any `neuro_ash::BatchEvaluator`, enabling deterministic
-CPU tests and the production Vulkan path.
-
-Action economics are explicitly provisional. See the
-[workspace README](../README.md) for the complete implemented contract and the
-remaining scaling constraints.
+See the [workspace README](../README.md) for the implemented boundary.

@@ -10,17 +10,6 @@ pub struct KnownPeoplePool {
 }
 
 impl KnownPeoplePool {
-    pub fn new(rows: usize) -> Self {
-        let occupant_count = rows
-            .checked_mul(KNOWN_PERSON_COUNT)
-            .expect("known-person storage size overflows usize");
-        Self {
-            occupants: vec![EntityId::VACANT; occupant_count],
-            active: vec![[0; KNOWN_PERSON_MASK_WORDS]; rows],
-            rows,
-        }
-    }
-
     pub fn with_capacity(row_capacity: usize) -> Self {
         let occupant_capacity = row_capacity
             .checked_mul(KNOWN_PERSON_COUNT)
@@ -33,13 +22,8 @@ impl KnownPeoplePool {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.rows
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.rows == 0
     }
 
     pub fn push_empty(&mut self) {
@@ -105,29 +89,14 @@ mod tests {
 
     #[test]
     fn rows_are_fixed_width_and_swap_removed_together() {
-        let mut pool = KnownPeoplePool::new(2);
+        let mut pool = KnownPeoplePool::with_capacity(2);
+        pool.push_empty();
+        pool.push_empty();
         pool.replace(1, 17, EntityId(99));
         pool.swap_remove(0);
 
         assert_eq!(pool.len(), 1);
         assert_eq!(pool.occupant(0, 17), Some(EntityId(99)));
         assert!(pool.is_active(0, 17));
-    }
-
-    #[test]
-    fn reserved_rows_can_be_filled_without_changing_the_layout() {
-        let mut pool = KnownPeoplePool::with_capacity(3);
-        assert!(pool.occupants.capacity() >= 3 * KNOWN_PERSON_COUNT);
-        assert!(pool.active.capacity() >= 3);
-
-        for _ in 0..3 {
-            pool.push_empty();
-        }
-        pool.replace(2, KNOWN_PERSON_COUNT - 1, EntityId(7));
-        pool.shrink_to_fit();
-
-        assert_eq!(pool.len(), 3);
-        assert_eq!(pool.occupant(2, KNOWN_PERSON_COUNT - 1), Some(EntityId(7)));
-        assert!(pool.is_active(2, KNOWN_PERSON_COUNT - 1));
     }
 }

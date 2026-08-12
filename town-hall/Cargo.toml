@@ -5,6 +5,5 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-dimension_macro.workspace = true
 neuro-ash.workspace = true
 rayon.workspace = true

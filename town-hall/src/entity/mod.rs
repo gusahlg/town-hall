@@ -1,3 +1,5 @@
+use crate::{Inventory, Need, Position};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EntityId(pub u128);
 
@@ -11,6 +13,8 @@ pub enum EntityKind {
     Company,
 }
 
+/// Temporary action vocabulary. The neural/social layout is stable, but these
+/// economic choices will be replaced once the decision model is designed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Predict { amount: u64, target: EntityId },
@@ -18,28 +22,36 @@ pub enum Action {
     Give { amount: u64, target: EntityId },
 }
 
+pub type Money = u64;
+
 #[derive(Debug, Clone)]
 pub struct Entity {
     kind: EntityKind,
-    resources: u64,
-    owners: Option<EntityId>,
+    inventory: Inventory,
+    money: Money,
+    location: Position,
     id: EntityId,
     last_action: Action,
-    preference: Preference,
+    needs: Vec<Need>,
 }
 
 impl Entity {
-    pub fn new(kind: EntityKind, resources: u64, owners: Option<EntityId>, id: EntityId) -> Self {
+    pub(crate) fn new(
+        kind: EntityKind,
+        inventory: Inventory,
+        money: Money,
+        location: Position,
+        needs: Vec<Need>,
+        id: EntityId,
+    ) -> Self {
         Self {
             kind,
-            resources,
-            owners,
+            inventory,
+            money,
+            location,
             id,
             last_action: Action::Conserve,
-            // Preference should be pseud-random and need should be updated regularly due to
-            // different events.
-            preference: Preference { preferences: vec![vec![55, 72, 241], vec![0, 32, 593, 45]], 
-                needs: vec![Need {target: vec![0], intensity: 0.95, recovery_rate: 5.0 }, Need {target: vec![3, 8], intensity: 1.0, recovery_rate: 10.0 }] },
+            needs,
         }
     }
 
@@ -54,13 +66,23 @@ impl Entity {
     }
 
     #[inline]
-    pub fn resources(&self) -> u64 {
-        self.resources
+    pub fn inventory(&self) -> &Inventory {
+        &self.inventory
     }
 
     #[inline]
-    pub fn owners(&self) -> Option<EntityId> {
-        self.owners
+    pub fn money(&self) -> Money {
+        self.money
+    }
+
+    #[inline]
+    pub fn location(&self) -> Position {
+        self.location
+    }
+
+    #[inline]
+    pub fn needs(&self) -> &[Need] {
+        &self.needs
     }
 
     #[inline]
@@ -68,25 +90,11 @@ impl Entity {
         self.last_action
     }
 
-    pub(crate) fn set_resources(&mut self, resources: u64) {
-        self.resources = resources;
+    pub(crate) fn set_money(&mut self, money: Money) {
+        self.money = money;
     }
 
     pub(crate) fn set_last_action(&mut self, action: Action) {
         self.last_action = action;
     }
-}
-
-#[derive(Debug, Clone)]
-struct Preference {
-    // Each u16 maps to a resource in resources
-    preferences: Vec<Vec<u16>>,
-    pub needs: Vec<Need>,
-}
-
-#[derive(Debug, Clone)]
-struct Need {
-    target: Vec<u16>,
-    intensity: f32, // 0..1
-    recovery_rate: f32,
 }

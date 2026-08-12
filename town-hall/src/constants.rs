@@ -3,7 +3,6 @@
 
 pub const STARTING_POPULATION: usize = 25_001;
 pub const DEFAULT_RANDOM_SEED: u64 = 0x5eed_5eed_cafe_babe;
-pub const CONSUMPTION_PER_ITERATION: u64 = 25;
 
 pub const KNOWN_PERSON_COUNT: usize = 200;
 pub const KNOWN_PERSON_MASK_WORDS: usize = KNOWN_PERSON_COUNT.div_ceil(64);

@@ -20,10 +20,6 @@ pub enum ReaderPool {
 }
 
 impl ReaderPool {
-    pub fn monomial(action_brains: &DenseNetworkPool, random: &mut Random) -> Self {
-        Self::Monomial(MonomialNfnPool::new(action_brains, random))
-    }
-
     pub fn monomial_with_capacity(
         action_brains: &DenseNetworkPool,
         reader_capacity: usize,
@@ -42,14 +38,10 @@ impl ReaderPool {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Monomial(pool) => pool.len(),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub fn output_size(&self) -> usize {

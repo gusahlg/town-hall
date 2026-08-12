@@ -25,17 +25,7 @@ fn main() -> Result<()> {
     );
 
     while village.iterations() < iterations {
-        let report = village.step(&mut gpu)?;
-        println!(
-            "iteration {:>3}: entities={}, deaths={}, learned_slots={}, consumed={}, entity_resources={}, world_resources={}",
-            report.iteration,
-            village.entities().len(),
-            report.deaths.len(),
-            report.replaced_slots,
-            report.consumed_resources,
-            village.total_entity_resources(),
-            village.resources()
-        );
+        village.step(&mut gpu)?;
     }
 
     Ok(())

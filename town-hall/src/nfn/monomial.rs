@@ -77,13 +77,8 @@ impl MonomialNfnPool {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.readers
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.readers == 0
     }
 
     #[inline]

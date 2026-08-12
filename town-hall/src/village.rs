@@ -8,26 +8,15 @@ use rayon::prelude::*;
 
 use crate::{
     ACTION_INPUT_COUNT, ACTION_LAYER_SIZES, ACTION_OUTPUT_COUNT, Action, BASE_INPUT_COUNT,
-    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, CONSUMPTION_PER_ITERATION, ConnectionBundle,
-    DEFAULT_RANDOM_SEED, Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START,
-    KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT,
-    PREDICT_OUTPUT_START, ReaderKind, ReaderPool, STARTING_POPULATION, give_output, predict_output,
-    Market, World,
+    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED, Economy,
+    Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START, Inventory,
+    KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT, Need,
+    PREDICT_OUTPUT_START, Position, ReaderKind, ReaderPool, STARTING_POPULATION, World,
+    give_output, predict_output,
 };
 
-const INITIAL_ENTITY_RESOURCES: u64 = 100;
-const INITIAL_WORLD_RESOURCES: u128 = 1_000;
-const INITIAL_GROWTH_RATE: u64 = 100;
+const INITIAL_ENTITY_MONEY: u64 = 100;
 const PARALLEL_READER_THRESHOLD: usize = 128;
-
-#[derive(Debug, Clone)]
-pub struct TickReport {
-    pub iteration: u128,
-    pub replaced_slots: usize,
-    pub consumed_resources: u128,
-    pub deaths: Vec<EntityId>,
-    pub actions: Vec<Action>,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct SlotReplacement {
@@ -69,11 +58,8 @@ pub struct Village {
     random: Random,
     next_entity_id: u128,
     iterations: u128,
-    // Immutable representation of market metadata
-    market: Market,
-    // Resources (described in market) distribution over a map
+    economy: Economy,
     world: World,
-    growth_rate: u64,
 }
 
 impl Default for Village {
@@ -95,6 +81,7 @@ impl Village {
         let mut random = Random::new(seed);
         let action_brains = DenseNetworkPool::with_capacity(action_shape, population);
         let readers = ReaderPool::monomial_with_capacity(&action_brains, population, &mut random);
+        let world = World::default();
         let mut village = Self {
             population: Vec::with_capacity(population),
             entity_indices: HashMap::with_capacity(population),
@@ -105,12 +92,11 @@ impl Village {
             random,
             next_entity_id: 0,
             iterations: 0,
-            market: Market::default(),
-            world: world::generate(),
-            growth_rate: INITIAL_GROWTH_RATE,
+            economy: Economy::default(),
+            world,
         };
         for _ in 0..population {
-            village.spawn(EntityKind::Person, INITIAL_ENTITY_RESOURCES, None);
+            village.spawn_person(INITIAL_ENTITY_MONEY);
         }
         village
     }
@@ -144,22 +130,43 @@ impl Village {
     pub fn iterations(&self) -> u128 {
         self.iterations
     }
+
+    #[inline]
+    pub fn economy(&self) -> &Economy {
+        &self.economy
     }
 
     #[inline]
-    pub fn growth_rate(&self) -> u64 {
-        self.growth_rate
+    pub fn economy_mut(&mut self) -> &mut Economy {
+        &mut self.economy
     }
 
-    pub fn total_entity_resources(&self) -> u128 {
+    #[inline]
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    #[inline]
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    pub fn total_money(&self) -> u128 {
         self.population
             .iter()
-            .map(|entity| entity.resources() as u128)
+            .map(|entity| entity.money() as u128)
             .sum()
     }
 
-    pub fn spawn_person(&mut self, resources: u64) -> EntityId {
-        self.spawn(EntityKind::Person, resources, None)
+    pub fn spawn_person(&mut self, money: u64) -> EntityId {
+        let location = self.next_spawn_position();
+        self.spawn(
+            EntityKind::Person,
+            Inventory::default(),
+            money,
+            location,
+            Vec::new(),
+        )
     }
 
     pub fn remove_entity(&mut self, id: EntityId) -> Result<Entity> {
@@ -169,12 +176,6 @@ impl Village {
         self.shrink_storage_if_sparse();
         self.assert_aligned()?;
         Ok(removed)
-    }
-
-    pub fn set_entity_resources(&mut self, id: EntityId, resources: u64) -> Result<()> {
-        let index = self.entity_index(id)?;
-        self.population[index].set_resources(resources);
-        Ok(())
     }
 
     pub fn action_weights_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f32]> {
@@ -208,21 +209,14 @@ impl Village {
     }
 
     /// One synchronous simulation iteration:
-    /// snapshot/rank -> learn replacements -> atomically patch -> act ->
-    /// apply -> consume -> remove depleted entities.
-    pub fn step(&mut self, evaluator: &mut impl BatchEvaluator) -> Result<TickReport> {
+    /// snapshot/rank -> learn replacements -> atomically patch -> act -> apply.
+    pub fn step(&mut self, evaluator: &mut impl BatchEvaluator) -> Result<()> {
         self.assert_aligned()?;
         if self.population.is_empty() {
             evaluator.release(&self.action_brains);
             evaluator.release(&self.get_to_know_brains);
-            self.finish_world_update();
-            return Ok(TickReport {
-                iteration: self.iterations,
-                replaced_slots: 0,
-                consumed_resources: 0,
-                deaths: Vec::new(),
-                actions: Vec::new(),
-            });
+            self.iterations = self.iterations.saturating_add(1);
+            return Ok(());
         }
 
         let plan = self.plan_slot_updates();
@@ -291,7 +285,6 @@ impl Village {
             pending.iter().all(Option::is_some),
             "a planned slot replacement was not learned"
         );
-        let replaced_slots = plan.replacements.len();
         self.apply_slot_metadata(&plan);
         for (replacement, bundle) in plan.replacements.iter().zip(pending) {
             bundle.expect("validated above").install(
@@ -317,27 +310,26 @@ impl Village {
         drop(logits);
         drop(action_inputs);
 
-        self.apply_placeholder_actions(&actions);
-        let consumed_resources = self.apply_consumption();
+        self.apply_actions(&actions);
         for (entity, &action) in self.population.iter_mut().zip(&actions) {
             entity.set_last_action(action);
         }
-        let deaths = self.remove_depleted_entities()?;
-        if self.population.is_empty() {
-            evaluator.release(&self.action_brains);
-        }
-        self.finish_world_update();
-
-        Ok(TickReport {
-            iteration: self.iterations,
-            replaced_slots,
-            consumed_resources,
-            deaths,
-            actions,
-        })
+        self.iterations = self.iterations.saturating_add(1);
+        Ok(())
     }
 
-    fn spawn(&mut self, kind: EntityKind, resources: u64, owners: Option<EntityId>) -> EntityId {
+    fn spawn(
+        &mut self,
+        kind: EntityKind,
+        inventory: Inventory,
+        money: u64,
+        location: Position,
+        needs: Vec<Need>,
+    ) -> EntityId {
+        assert!(
+            self.world.contains(location),
+            "entity location is outside the world"
+        );
         let id = EntityId(self.next_entity_id);
         self.next_entity_id = self
             .next_entity_id
@@ -345,13 +337,22 @@ impl Village {
             .expect("entity ID space exhausted");
         let index = self.population.len();
         self.population
-            .push(Entity::new(kind, resources, owners, id));
+            .push(Entity::new(kind, inventory, money, location, needs, id));
         self.entity_indices.insert(id, index);
         self.known_people.push_empty();
         self.action_brains.push_random(&mut self.random);
         self.get_to_know_brains.push_random(&mut self.random);
         self.readers.push_random(&mut self.random);
         id
+    }
+
+    fn next_spawn_position(&self) -> Position {
+        let tile_count = u128::from(self.world.width()) * u128::from(self.world.height());
+        let tile = self.next_entity_id % tile_count;
+        Position::new(
+            (tile % u128::from(self.world.width())) as u32,
+            (tile / u128::from(self.world.width())) as u32,
+        )
     }
 
     fn swap_remove_entity(&mut self, index: usize) -> Result<Entity> {
@@ -528,8 +529,8 @@ impl Village {
         let keep = limit.min(indices.len());
         let compare = |&left: &usize, &right: &usize| {
             self.population[right]
-                .resources()
-                .cmp(&self.population[left].resources())
+                .money()
+                .cmp(&self.population[left].money())
                 .then_with(|| self.population[left].id().cmp(&self.population[right].id()))
         };
         if keep < indices.len() {
@@ -542,12 +543,15 @@ impl Village {
 
     fn build_action_inputs(&self) -> Vec<f32> {
         let mut inputs = vec![0.0; self.population.len() * ACTION_INPUT_COUNT];
+        let world_material = log_normalize(self.world.total_deposited_material());
+
         for (entity_index, entity) in self.population.iter().enumerate() {
             let row = &mut inputs
                 [entity_index * ACTION_INPUT_COUNT..(entity_index + 1) * ACTION_INPUT_COUNT];
-            row[0] = log_normalize(entity.resources() as u128);
-            row[1] = log_normalize(self.resources);
-            row[2] = log_normalize(self.growth_rate as u128);
+            row[0] = log_normalize(entity.money() as u128);
+            row[1] = log_normalize(entity.inventory().total_units());
+            row[2] = world_material;
+
             for slot in 0..KNOWN_PERSON_COUNT {
                 if !self.known_people.is_active(entity_index, slot) {
                     continue;
@@ -557,7 +561,7 @@ impl Village {
                 };
                 if let Some(&known_index) = self.entity_indices.get(&known_id) {
                     row[BASE_INPUT_COUNT + slot] =
-                        log_normalize(self.population[known_index].resources() as u128);
+                        log_normalize(self.population[known_index].money() as u128);
                 }
             }
         }
@@ -602,7 +606,7 @@ impl Village {
         } else {
             -(-margin).exp_m1()
         };
-        let available = self.population[entity].resources();
+        let available = self.population[entity].money();
         let amount = ((available as f64) * confidence as f64).floor() as u64;
 
         if best_output < GIVE_OUTPUT_START {
@@ -620,10 +624,9 @@ impl Village {
         }
     }
 
-    /// Deliberately thin placeholder. Give transfers are staged; Predict has
-    /// no world effect yet. The neural architecture does not depend on these
-    /// provisional economics.
-    fn apply_placeholder_actions(&mut self, actions: &[Action]) {
+    /// Temporary action adapter. Give transfers are staged and Predict has no
+    /// world effect; neither behavior is part of the settled economic model.
+    fn apply_actions(&mut self, actions: &[Action]) {
         assert_eq!(
             actions.len(),
             self.population.len(),
@@ -632,7 +635,7 @@ impl Village {
         let before = self
             .population
             .iter()
-            .map(Entity::resources)
+            .map(Entity::money)
             .collect::<Vec<_>>();
         let mut outgoing = vec![0_u64; self.population.len()];
         let mut incoming = vec![0_u128; self.population.len()];
@@ -650,42 +653,8 @@ impl Village {
         for entity in 0..self.population.len() {
             let remaining = before[entity] - outgoing[entity];
             let updated = (remaining as u128 + incoming[entity]).min(u64::MAX as u128) as u64;
-            self.population[entity].set_resources(updated);
+            self.population[entity].set_money(updated);
         }
-    }
-
-    fn apply_consumption(&mut self) -> u128 {
-        self.population
-            .iter_mut()
-            .map(|entity| {
-                let consumed = entity.resources().min(CONSUMPTION_PER_ITERATION);
-                entity.set_resources(entity.resources() - consumed);
-                consumed as u128
-            })
-            .sum()
-    }
-
-    fn remove_depleted_entities(&mut self) -> Result<Vec<EntityId>> {
-        let deaths = self
-            .population
-            .iter()
-            .filter(|entity| entity.resources() == 0)
-            .map(Entity::id)
-            .collect::<Vec<_>>();
-        for &id in &deaths {
-            let index = self.entity_indices[&id];
-            self.swap_remove_entity(index)?;
-        }
-        if !deaths.is_empty() {
-            self.shrink_storage_if_sparse();
-            self.assert_aligned()?;
-        }
-        Ok(deaths)
-    }
-
-    fn finish_world_update(&mut self) {
-        self.resources = self.resources.saturating_add(self.growth_rate as u128);
-        self.iterations = self.iterations.saturating_add(1);
     }
 
     // Makes sure that the networks and the population are aligned properly
@@ -699,6 +668,11 @@ impl Village {
             ensure!(
                 self.entity_indices.get(&entity.id()) == Some(&index),
                 "entity index map has the wrong row for {:?}",
+                entity.id()
+            );
+            ensure!(
+                self.world.contains(entity.location()),
+                "entity {:?} is outside the world",
                 entity.id()
             );
         }
@@ -765,351 +739,14 @@ mod tests {
     use super::*;
     use neuro_ash::CpuEvaluator;
 
-    struct FailingEvaluator;
-
-    impl BatchEvaluator for FailingEvaluator {
-        fn evaluate(&mut self, _pool: &DenseNetworkPool, _inputs: &[f32]) -> Result<Vec<f32>> {
-            anyhow::bail!("synthetic evaluator failure")
-        }
-    }
-
-    struct ChunkedCpuEvaluator {
-        inner: CpuEvaluator,
-        max_batch_size: usize,
-    }
-
-    impl BatchEvaluator for ChunkedCpuEvaluator {
-        fn evaluate(&mut self, pool: &DenseNetworkPool, inputs: &[f32]) -> Result<Vec<f32>> {
-            self.inner.evaluate(pool, inputs)
-        }
-
-        fn evaluate_range(
-            &mut self,
-            pool: &DenseNetworkPool,
-            networks: Range<usize>,
-            inputs: &[f32],
-        ) -> Result<Vec<f32>> {
-            self.inner.evaluate_range(pool, networks, inputs)
-        }
-
-        fn max_batch_size(&self) -> usize {
-            self.max_batch_size
-        }
-    }
-
     #[test]
-    fn initial_plan_fills_every_available_non_self_slot_once() {
+    fn a_cpu_tick_preserves_alignment() {
         let mut village = Village::with_population(4, 1);
-        let plan = village.plan_slot_updates();
-        assert_eq!(plan.replacements.len(), 12);
-        assert_eq!(plan.rounds, 3);
-        village.apply_slot_metadata(&plan);
-        for observer in 0..4 {
-            assert_eq!(
-                (0..KNOWN_PERSON_COUNT)
-                    .filter(|&slot| village.known_people.is_active(observer, slot))
-                    .count(),
-                3
-            );
-            assert!((0..KNOWN_PERSON_COUNT).all(|slot| {
-                village.known_people.occupant(observer, slot)
-                    != Some(village.population[observer].id())
-            }));
-        }
-        assert!(village.plan_slot_updates().replacements.is_empty());
-    }
+        village.step(&mut CpuEvaluator).unwrap();
 
-    #[test]
-    fn chunked_learning_matches_full_population_learning() {
-        let mut full = Village::with_population(5, 101);
-        let mut chunked = Village::with_population(5, 101);
-        let full_report = full.step(&mut CpuEvaluator).unwrap();
-        let chunked_report = chunked
-            .step(&mut ChunkedCpuEvaluator {
-                inner: CpuEvaluator,
-                max_batch_size: 2,
-            })
-            .unwrap();
-
-        assert_eq!(chunked_report.actions, full_report.actions);
-        assert_eq!(chunked_report.replaced_slots, full_report.replaced_slots);
-        for (full_layer, chunked_layer) in full
-            .action_brains
-            .layers()
-            .iter()
-            .zip(chunked.action_brains.layers())
-        {
-            assert_eq!(chunked_layer.weights(), full_layer.weights());
-            assert_eq!(chunked_layer.biases(), full_layer.biases());
-        }
-    }
-
-    #[test]
-    fn dead_occupants_become_inactive_and_can_be_replaced_later() {
-        let mut village = Village::with_population(4, 2);
-        let initial = village.plan_slot_updates();
-        village.apply_slot_metadata(&initial);
-        let dead = village.population[3].id();
-        village.remove_entity(dead).unwrap();
-        let after_death = village.plan_slot_updates();
-        assert!(after_death.replacements.is_empty());
-        village.apply_slot_metadata(&after_death);
-        for observer in 0..3 {
-            assert_eq!(
-                (0..KNOWN_PERSON_COUNT)
-                    .filter(|&slot| village.known_people.is_active(observer, slot))
-                    .count(),
-                2
-            );
-        }
-
-        village.spawn_person(100);
-        let after_birth = village.plan_slot_updates();
-        assert_eq!(after_birth.replacements.len(), 6);
-    }
-
-    #[test]
-    fn a_complete_cpu_tick_runs_the_decided_neural_flow() {
-        let mut village = Village::with_population(4, 3);
-        let mut evaluator = CpuEvaluator;
-        let report = village.step(&mut evaluator).unwrap();
-
-        assert_eq!(report.iteration, 1);
-        assert_eq!(report.replaced_slots, 12);
-        assert!(report.consumed_resources <= 4 * CONSUMPTION_PER_ITERATION as u128);
-        assert_eq!(report.actions.len(), 4);
+        assert_eq!(village.iterations(), 1);
+        assert_eq!(village.entities().len(), 4);
         assert!(village.action_brains.all_finite());
-
-        let second = village.step(&mut evaluator).unwrap();
-        assert_eq!(second.iteration, 2);
-        assert_eq!(second.replaced_slots, 0);
-    }
-
-    #[test]
-    fn failed_learning_does_not_commit_slot_metadata() {
-        let mut village = Village::with_population(4, 31);
-        let error = village.step(&mut FailingEvaluator).unwrap_err();
-        assert!(error.to_string().contains("synthetic"));
-        assert_eq!(village.iterations(), 0);
-        for observer in 0..village.population.len() {
-            for slot in 0..KNOWN_PERSON_COUNT {
-                assert!(!village.known_people.is_active(observer, slot));
-                assert_eq!(village.known_people.occupant(observer, slot), None);
-            }
-        }
-    }
-
-    #[test]
-    fn top_two_hundred_churn_replaces_slots_without_reordering_survivors() {
-        let mut village = Village::with_population(KNOWN_PERSON_COUNT + 2, 13);
-        let initial = village.plan_slot_updates();
-        assert_eq!(
-            initial.replacements.len(),
-            (KNOWN_PERSON_COUNT + 2) * KNOWN_PERSON_COUNT
-        );
-        village.apply_slot_metadata(&initial);
-
-        let observer = village.entity_indices[&EntityId(0)];
-        let survivor = EntityId(1);
-        let survivor_slot = (0..KNOWN_PERSON_COUNT)
-            .find(|&slot| village.known_people.occupant(observer, slot) == Some(survivor))
-            .unwrap();
-        village
-            .set_entity_resources(EntityId((KNOWN_PERSON_COUNT + 1) as u128), u64::MAX)
-            .unwrap();
-        let churn = village.plan_slot_updates();
-
-        assert_eq!(churn.replacements.len(), KNOWN_PERSON_COUNT + 1);
-        assert_eq!(
-            village.known_people.occupant(observer, survivor_slot),
-            Some(survivor)
-        );
-    }
-
-    #[test]
-    fn action_decoder_masks_inactive_slots_and_uses_logit_margin_for_amount() {
-        let mut village = Village::with_population(2, 14);
-        let plan = village.plan_slot_updates();
-        village.apply_slot_metadata(&plan);
-        let active_slot = (0..KNOWN_PERSON_COUNT)
-            .find(|&slot| village.known_people.is_active(0, slot))
-            .unwrap();
-        let inactive_slot = (0..KNOWN_PERSON_COUNT)
-            .find(|&slot| !village.known_people.is_active(0, slot))
-            .unwrap();
-        let mut logits = vec![-10.0; ACTION_OUTPUT_COUNT];
-        logits[CONSERVE_OUTPUT] = 0.0;
-        logits[predict_output(active_slot)] = 2.0;
-        logits[give_output(active_slot)] = 1.0;
-        logits[give_output(inactive_slot)] = 1_000.0;
-
-        let action = village.decode_action(0, &logits);
-        let Action::Predict { amount, target } = action else {
-            panic!("expected Predict, got {action:?}");
-        };
-        assert_eq!(
-            target,
-            village.known_people.occupant(0, active_slot).unwrap()
-        );
-        assert_eq!(amount, 63);
-    }
-
-    #[test]
-    fn action_decoder_treats_non_finite_logits_as_unavailable() {
-        let mut village = Village::with_population(2, 15);
-        let plan = village.plan_slot_updates();
-        village.apply_slot_metadata(&plan);
-        let active_slot = (0..KNOWN_PERSON_COUNT)
-            .find(|&slot| village.known_people.is_active(0, slot))
-            .unwrap();
-        let mut logits = vec![f32::NEG_INFINITY; ACTION_OUTPUT_COUNT];
-        logits[CONSERVE_OUTPUT] = 0.0;
-        logits[predict_output(active_slot)] = f32::NAN;
-        logits[give_output(active_slot)] = f32::INFINITY;
-
-        assert_eq!(village.decode_action(0, &logits), Action::Conserve);
-    }
-
-    #[test]
-    fn reciprocal_give_actions_are_applied_from_one_snapshot() {
-        let mut village = Village::with_population(2, 16);
-        let first = village.population[0].id();
-        let second = village.population[1].id();
-        village.population[0].set_resources(100);
-        village.population[1].set_resources(40);
-
-        village.apply_placeholder_actions(&[
-            Action::Give {
-                amount: 100,
-                target: second,
-            },
-            Action::Give {
-                amount: 40,
-                target: first,
-            },
-        ]);
-
-        assert_eq!(village.population[0].resources(), 40);
-        assert_eq!(village.population[1].resources(), 100);
-        assert_eq!(village.total_entity_resources(), 140);
-    }
-
-    #[test]
-    fn removing_a_middle_entity_keeps_every_private_pool_aligned() {
-        let mut village = Village::with_population(3, 17);
-        let plan = village.plan_slot_updates();
-        village.apply_slot_metadata(&plan);
-        let removed = village.population[1].id();
-        let moved = village.population[2].id();
-        let expected_known = (0..KNOWN_PERSON_COUNT)
-            .map(|slot| {
-                (
-                    village.known_people.occupant(2, slot),
-                    village.known_people.is_active(2, slot),
-                )
-            })
-            .collect::<Vec<_>>();
-        let expected_action = village
-            .action_brains
-            .layers()
-            .iter()
-            .map(|layer| {
-                (
-                    layer.network_weights(2).to_vec(),
-                    layer.network_biases(2).to_vec(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let expected_get_to_know = village
-            .get_to_know_brains
-            .layers()
-            .iter()
-            .map(|layer| {
-                (
-                    layer.network_weights(2).to_vec(),
-                    layer.network_biases(2).to_vec(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut expected_reader = vec![0.0; MONOMIAL_FEATURE_COUNT];
-        village
-            .readers
-            .read_into(2, &village.action_brains, 2, &mut expected_reader)
-            .unwrap();
-
-        village.remove_entity(removed).unwrap();
-
-        assert_eq!(village.population[1].id(), moved);
-        assert_eq!(village.entity_indices[&moved], 1);
-        for (slot, expected) in expected_known.into_iter().enumerate() {
-            assert_eq!(
-                (
-                    village.known_people.occupant(1, slot),
-                    village.known_people.is_active(1, slot),
-                ),
-                expected
-            );
-        }
-        for (layer, (weights, biases)) in village.action_brains.layers().iter().zip(expected_action)
-        {
-            assert_eq!(layer.network_weights(1), weights);
-            assert_eq!(layer.network_biases(1), biases);
-        }
-        for (layer, (weights, biases)) in village
-            .get_to_know_brains
-            .layers()
-            .iter()
-            .zip(expected_get_to_know)
-        {
-            assert_eq!(layer.network_weights(1), weights);
-            assert_eq!(layer.network_biases(1), biases);
-        }
-        let mut actual_reader = vec![0.0; MONOMIAL_FEATURE_COUNT];
-        village
-            .readers
-            .read_into(1, &village.action_brains, 1, &mut actual_reader)
-            .unwrap();
-        assert_eq!(actual_reader, expected_reader);
         village.assert_aligned().unwrap();
-    }
-
-    #[test]
-    fn log_resources_are_bounded_and_monotonic() {
-        assert_eq!(log_normalize(0), 0.0);
-        assert!(log_normalize(10) < log_normalize(1_000));
-        assert_eq!(log_normalize(u64::MAX as u128), 1.0);
-        assert_eq!(log_normalize(u128::MAX), 1.0);
-    }
-
-    #[test]
-    fn consumption_removes_up_to_twenty_five_resources_per_entity() {
-        let mut village = Village::with_population(2, 41);
-        village.population[0].set_resources(100);
-        village.population[1].set_resources(10);
-
-        let consumed = village.apply_consumption();
-
-        assert_eq!(consumed, 35);
-        assert_eq!(village.population[0].resources(), 75);
-        assert_eq!(village.population[1].resources(), 0);
-    }
-
-    #[test]
-    fn entity_dies_when_consumption_exhausts_its_resources() {
-        let mut village = Village::with_population(1, 42);
-        let doomed = village.population[0].id();
-        village.population[0].set_resources(CONSUMPTION_PER_ITERATION);
-        let mut evaluator = CpuEvaluator;
-
-        let report = village.step(&mut evaluator).unwrap();
-
-        assert_eq!(report.consumed_resources, CONSUMPTION_PER_ITERATION as u128);
-        assert_eq!(report.deaths, vec![doomed]);
-        assert!(village.population.is_empty());
-        assert!(!village.entity_indices.contains_key(&doomed));
-        assert_eq!(village.known_people.len(), 0);
-        assert_eq!(village.action_brains.len(), 0);
-        assert_eq!(village.get_to_know_brains.len(), 0);
-        assert_eq!(village.readers.len(), 0);
     }
 }

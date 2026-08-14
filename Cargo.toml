@@ -1,5 +1,11 @@
 [workspace]
-members = ["neuro-ash", "town-hall"]
+members = [
+    "apps/town-hall-cli",
+    "apps/town-hall-client",
+    "crates/neuro-ash",
+    "crates/town-hall",
+    "crates/town-hall-gui",
+]
 resolver = "3"
 
 [workspace.package]
@@ -7,6 +13,14 @@ edition = "2024"
 
 [workspace.dependencies]
 anyhow = "1"
-neuro-ash = { path = "neuro-ash" }
+eframe = { version = "0.36.1", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+neuro-ash = { path = "crates/neuro-ash" }
 rayon = "1"
 tensor-ash = { path = "../tensor-ash" }
+town-hall = { path = "crates/town-hall" }
+town-hall-gui = { path = "crates/town-hall-gui" }

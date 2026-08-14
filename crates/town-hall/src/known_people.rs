@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{EntityId, KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS};
 
 #[derive(Debug)]
@@ -50,6 +52,21 @@ impl KnownPeoplePool {
         self.occupants.truncate(last * KNOWN_PERSON_COUNT);
         self.active.swap_remove(row);
         self.rows -= 1;
+    }
+
+    pub(crate) fn forget(&mut self, removed: &HashSet<EntityId>) {
+        if removed.is_empty() {
+            return;
+        }
+        for (index, occupant) in self.occupants.iter_mut().enumerate() {
+            if !removed.contains(occupant) {
+                continue;
+            }
+            *occupant = EntityId::VACANT;
+            let row = index / KNOWN_PERSON_COUNT;
+            let slot = index % KNOWN_PERSON_COUNT;
+            self.active[row][slot / 64] &= !(1_u64 << (slot % 64));
+        }
     }
 
     #[inline]

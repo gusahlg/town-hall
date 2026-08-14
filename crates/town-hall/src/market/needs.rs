@@ -10,9 +10,9 @@ pub struct NeedComponent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Need {
-    target: Box<[NeedComponent]>,
-    intensity: f32,
-    recovery_rate: f32,
+    pub target: Box<[NeedComponent]>,
+    pub intensity: f32,
+    pub recovery_rate: f32,
 }
 
 impl Need {
@@ -39,20 +39,5 @@ impl Need {
             intensity,
             recovery_rate,
         })
-    }
-
-    #[inline]
-    pub fn target(&self) -> &[NeedComponent] {
-        &self.target
-    }
-
-    #[inline]
-    pub fn intensity(&self) -> f32 {
-        self.intensity
-    }
-
-    #[inline]
-    pub fn recovery_rate(&self) -> f32 {
-        self.recovery_rate
     }
 }

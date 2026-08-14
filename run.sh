@@ -22,7 +22,7 @@ fi
 
 # nix develop supplies Rust, glslc, the Vulkan loader, validation layers, and
 # the runtime path to the NixOS GPU driver. Arguments are forwarded to the
-# town-hall binary after Cargo's `--` separator.
+# town-hall CLI after Cargo's `--` separator.
 nix develop "${flake_ref}" --command \
     cargo run --manifest-path "${project_root}/Cargo.toml" \
-    --release --package town-hall -- "$@"
+    --release --package town-hall-cli -- "$@"

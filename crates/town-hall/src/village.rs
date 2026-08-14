@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use anyhow::{Result, ensure};
@@ -11,11 +11,12 @@ use crate::{
     CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED, Economy,
     Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START, Inventory,
     KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT, Need,
-    PREDICT_OUTPUT_START, Position, ReaderKind, ReaderPool, STARTING_POPULATION, World,
-    give_output, predict_output,
+    NeedComponent, PREDICT_OUTPUT_START, Position, PropertyPoint, ReaderKind, ReaderPool,
+    STARTING_POPULATION, World, give_output, predict_output,
 };
 
 const INITIAL_ENTITY_MONEY: u64 = 100;
+const BASELINE_NEED_RECOVERY_RATE: f32 = 0.05;
 const PARALLEL_READER_THRESHOLD: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
@@ -160,19 +161,38 @@ impl Village {
 
     pub fn spawn_person(&mut self, money: u64) -> EntityId {
         let location = self.next_spawn_position();
+        let needs = self.baseline_person_needs();
         self.spawn(
             EntityKind::Person,
             Inventory::default(),
             money,
             location,
-            Vec::new(),
+            needs,
         )
+    }
+
+    /// Minimal common demand until population-level need generation is chosen.
+    /// With no satisfaction, this baseline becomes fatal after roughly 1,000
+    /// state updates.
+    fn baseline_person_needs(&self) -> Vec<Need> {
+        let dimensions = self.economy.resources().dimensions();
+        let ideal = PropertyPoint::new(vec![0.5; dimensions])
+            .expect("the economy has a non-empty finite property space");
+        vec![
+            Need::new(
+                vec![NeedComponent { ideal, quantity: 1 }],
+                0.0,
+                BASELINE_NEED_RECOVERY_RATE,
+            )
+            .expect("the baseline person need is valid"),
+        ]
     }
 
     pub fn remove_entity(&mut self, id: EntityId) -> Result<Entity> {
         self.assert_aligned()?;
         let index = self.entity_index(id)?;
         let removed = self.swap_remove_entity(index)?;
+        self.known_people.forget(&HashSet::from([id]));
         self.shrink_storage_if_sparse();
         self.assert_aligned()?;
         Ok(removed)
@@ -209,9 +229,14 @@ impl Village {
     }
 
     /// One synchronous simulation iteration:
-    /// snapshot/rank -> learn replacements -> atomically patch -> act -> apply.
+    /// update/prune -> snapshot/rank -> learn replacements -> atomically patch
+    /// -> act -> apply.
     pub fn step(&mut self, evaluator: &mut impl BatchEvaluator) -> Result<()> {
         self.assert_aligned()?;
+        for entity in &mut self.population {
+            entity.update_state();
+        }
+        self.remove_dead_entities()?;
         if self.population.is_empty() {
             evaluator.release(&self.action_brains);
             evaluator.release(&self.get_to_know_brains);
@@ -375,6 +400,30 @@ impl Village {
                 .insert(self.population[index].id(), index);
         }
         Ok(removed)
+    }
+
+    fn remove_dead_entities(&mut self) -> Result<()> {
+        let dead = self
+            .population
+            .iter()
+            .filter(|entity| !entity.alive())
+            .map(Entity::id)
+            .collect::<HashSet<_>>();
+        if dead.is_empty() {
+            return Ok(());
+        }
+
+        let mut index = 0;
+        while index < self.population.len() {
+            if dead.contains(&self.population[index].id()) {
+                self.swap_remove_entity(index)?;
+            } else {
+                index += 1;
+            }
+        }
+        self.known_people.forget(&dead);
+        self.shrink_storage_if_sparse();
+        self.assert_aligned()
     }
 
     fn shrink_storage_if_sparse(&mut self) {
@@ -739,6 +788,18 @@ mod tests {
     use super::*;
     use neuro_ash::CpuEvaluator;
 
+    #[derive(Default)]
+    struct RecordingEvaluator {
+        population_sizes: Vec<usize>,
+    }
+
+    impl BatchEvaluator for RecordingEvaluator {
+        fn evaluate(&mut self, pool: &DenseNetworkPool, inputs: &[f32]) -> Result<Vec<f32>> {
+            self.population_sizes.push(pool.len());
+            pool.forward_cpu(inputs)
+        }
+    }
+
     #[test]
     fn a_cpu_tick_preserves_alignment() {
         let mut village = Village::with_population(4, 1);
@@ -747,6 +808,97 @@ mod tests {
         assert_eq!(village.iterations(), 1);
         assert_eq!(village.entities().len(), 4);
         assert!(village.action_brains.all_finite());
+        village.assert_aligned().unwrap();
+    }
+
+    #[test]
+    fn default_people_eventually_die_without_satisfaction() {
+        let mut village = Village::with_population(1, 1);
+        let entity = &mut village.population[0];
+        assert_eq!(entity.needs().len(), 1);
+        assert!(!entity.needs()[0].target.is_empty());
+
+        for _ in 0..5_000 {
+            entity.update_state();
+        }
+
+        assert!(!entity.alive());
+    }
+
+    #[test]
+    fn dead_entities_are_pruned_before_neural_evaluation() {
+        let mut village = Village::with_population(2, 1);
+        let dead = village.spawn(
+            EntityKind::Person,
+            Inventory::default(),
+            INITIAL_ENTITY_MONEY,
+            village.next_spawn_position(),
+            vec![Need::new(Vec::new(), 0.95, 0.1).unwrap()],
+        );
+        let mut evaluator = RecordingEvaluator::default();
+
+        village.step(&mut evaluator).unwrap();
+
+        assert!(!village.entity_indices.contains_key(&dead));
+        assert_eq!(village.entities().len(), 2);
+        assert!(!evaluator.population_sizes.is_empty());
+        assert!(
+            evaluator
+                .population_sizes
+                .iter()
+                .all(|&population| population == 2)
+        );
+        village.assert_aligned().unwrap();
+    }
+
+    #[test]
+    fn each_tick_updates_need_intensity_before_survival_is_checked() {
+        let mut village = Village::with_population(0, 1);
+        let entity = village.spawn(
+            EntityKind::Person,
+            Inventory::default(),
+            INITIAL_ENTITY_MONEY,
+            village.next_spawn_position(),
+            vec![Need::new(Vec::new(), 0.2, 0.1).unwrap()],
+        );
+
+        village.step(&mut CpuEvaluator).unwrap();
+
+        let entity = &village.population[village.entity_indices[&entity]];
+        assert!((entity.needs()[0].intensity - 0.3).abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn a_new_person_is_relearnt_after_a_known_person_is_removed() {
+        let mut village = Village::with_population(3, 2);
+        village.step(&mut CpuEvaluator).unwrap();
+        let removed = village.entities()[1].id();
+
+        village.remove_entity(removed).unwrap();
+        for row in 0..village.entities().len() {
+            assert!(
+                (0..KNOWN_PERSON_COUNT)
+                    .all(|slot| village.known_people.occupant(row, slot) != Some(removed))
+            );
+        }
+
+        let newcomer = village.spawn_person(INITIAL_ENTITY_MONEY);
+        village.step(&mut CpuEvaluator).unwrap();
+
+        assert!(village.entity_indices.contains_key(&newcomer));
+        for (row, entity) in village.entities().iter().enumerate() {
+            let expected = village
+                .entities()
+                .iter()
+                .map(Entity::id)
+                .filter(|&id| id != entity.id())
+                .collect::<HashSet<_>>();
+            let actual = (0..KNOWN_PERSON_COUNT)
+                .filter(|&slot| village.known_people.is_active(row, slot))
+                .filter_map(|slot| village.known_people.occupant(row, slot))
+                .collect::<HashSet<_>>();
+            assert_eq!(actual, expected);
+        }
         village.assert_aligned().unwrap();
     }
 }

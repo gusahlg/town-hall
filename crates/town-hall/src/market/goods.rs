@@ -4,8 +4,7 @@ use anyhow::{Result, ensure};
 
 use super::ResourceId;
 
-/// Temporary universal material unit. Its exact numeric representation remains
-/// deliberately replaceable while quantities are still being designed.
+/// Universal, indivisible material and inventory unit.
 pub type Quantity = u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -25,9 +24,13 @@ impl GoodId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Component {
     pub resource: ResourceId,
+    /// Primitive units embodied at this position in one unit of the good.
     pub quantity: Quantity,
 }
 
+/// One exact ordered physical configuration. Component boundaries, order, and
+/// quantities are identity: configurations are never flattened or combined for
+/// `GoodId` deduplication.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Good {
     configuration: Box<[Component]>,
@@ -69,9 +72,13 @@ pub(crate) fn canonical_amounts(mut amounts: Vec<GoodAmount>) -> Result<Vec<Good
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GoodAmount {
     pub good: GoodId,
+    /// Number of separate units of this exact good.
     pub quantity: Quantity,
 }
 
+/// Owned counts of exact goods. Inventory multiplicity never changes a good's
+/// internal configuration: fifty units of `[(A, 1)]` remain fifty objects, not
+/// one unit of `[(A, 50)]`.
 #[derive(Debug, Clone, Default)]
 pub struct Inventory {
     quantities: BTreeMap<GoodId, Quantity>,

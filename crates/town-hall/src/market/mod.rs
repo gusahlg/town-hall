@@ -20,6 +20,7 @@ use goods::canonical_amounts;
 #[derive(Debug)]
 pub struct Economy {
     resources: Resources,
+    resource_unit_goods: Vec<GoodId>,
     goods: Vec<GoodEntry>,
     good_ids: HashMap<Good, GoodId>,
 }
@@ -28,6 +29,7 @@ impl Economy {
     pub fn new(resource_dimensions: usize) -> Self {
         Self {
             resources: Resources::new(resource_dimensions),
+            resource_unit_goods: Vec::new(),
             goods: Vec::new(),
             good_ids: HashMap::new(),
         }
@@ -39,9 +41,28 @@ impl Economy {
     }
 
     pub fn register_resource(&mut self, properties: PropertyPoint) -> Result<ResourceId> {
-        self.resources.register(properties)
+        ensure!(
+            GoodId::from_index(self.goods.len()).is_some(),
+            "cannot register a resource because the good ID space is exhausted"
+        );
+        let resource = self.resources.register(properties)?;
+        debug_assert_eq!(resource.index(), self.resource_unit_goods.len());
+        let unit_good = self.register_good(vec![Component {
+            resource,
+            quantity: 1,
+        }])?;
+        self.resource_unit_goods.push(unit_good);
+        Ok(resource)
     }
 
+    /// The canonical `[(resource, 1)]` configuration used when one extracted
+    /// unit enters the economy. Provenance does not affect this `GoodId`.
+    pub fn resource_unit_good(&self, resource: ResourceId) -> Option<GoodId> {
+        self.resource_unit_goods.get(resource.index()).copied()
+    }
+
+    /// Registers a design by exact ordered configuration. This does not produce
+    /// an inventory unit; manufacture still requires a recipe and process.
     pub fn register_good(&mut self, configuration: Vec<Component>) -> Result<GoodId> {
         for component in &configuration {
             ensure!(
@@ -195,4 +216,52 @@ fn recipe_id(output: GoodId, index: usize) -> Result<RecipeId> {
         output,
         index: u32::try_from(index).map_err(|_| anyhow::anyhow!("recipe ID space is exhausted"))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inventory_multiplicity_is_not_product_structure() {
+        let mut economy = Economy::new(1);
+        let resource = economy
+            .register_resource(PropertyPoint::new([0.5].as_slice()).unwrap())
+            .unwrap();
+        let unit = economy.resource_unit_good(resource).unwrap();
+        let duplicate_unit = economy
+            .register_good(vec![Component {
+                resource,
+                quantity: 1,
+            }])
+            .unwrap();
+        let combined = economy
+            .register_good(vec![Component {
+                resource,
+                quantity: 50,
+            }])
+            .unwrap();
+
+        assert_eq!(unit, duplicate_unit);
+        assert_ne!(unit, combined);
+        let mut inventory = Inventory::default();
+        inventory.set(unit, 50);
+        inventory.set(combined, 1);
+        assert_eq!(inventory.quantity(unit), 50);
+        assert_eq!(inventory.quantity(combined), 1);
+
+        let recipe = economy
+            .register_recipe(
+                combined,
+                vec![GoodAmount {
+                    good: unit,
+                    quantity: 50,
+                }],
+            )
+            .unwrap();
+        economy
+            .register_process(recipe, Process::new(1, 1, vec![], vec![], vec![]).unwrap())
+            .unwrap();
+        assert_eq!(economy.recipe(recipe).unwrap().processes().len(), 1);
+    }
 }

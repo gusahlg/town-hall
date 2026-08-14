@@ -41,10 +41,42 @@ consumption, production, income, or death rules.
 populations through bounded GPU batches. Current networks cost about 212 KB per
 entity, so very large populations will require a later representation decision.
 
+## Workspace
+
+- `crates/town-hall` is the pure simulation library.
+- `crates/neuro-ash` contains its CPU/Vulkan neural evaluators.
+- `crates/town-hall-gui` is the shared eframe dashboard.
+- `apps/town-hall-client` launches the native app and builds the web app.
+- `apps/town-hall-cli` is the minimal batch-oriented command-line client.
+
+The native dashboard runs the real `Village` on a worker thread and prefers the
+Vulkan evaluator, falling back to CPU when Vulkan is unavailable. The browser
+uses the same GUI against a small deterministic local session: the simulation
+core remains native-only because its unchanged neural stack depends on Vulkan.
+
 ## Run and verify
 
 ```bash
 ./run.sh 1
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Launch the native dashboard with:
+
+```bash
+./apps/town-hall-client/run.sh
+```
+
+Run the CLI with its optional iteration count:
+
+```bash
+./apps/town-hall-cli/run.sh 100
+```
+
+Build and serve the WebAssembly client (the port defaults to `8080`):
+
+```bash
+./apps/town-hall-client/web/run.sh
+./apps/town-hall-client/web/run.sh 3000
 ```

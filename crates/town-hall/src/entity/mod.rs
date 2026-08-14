@@ -55,6 +55,20 @@ impl Entity {
         }
     }
 
+    pub(crate) fn update_state(&mut self) {
+        for need in self.needs.iter_mut() {
+            need.intensity += need.recovery_rate;
+        }
+    }
+    pub(crate) fn alive(&self) -> bool {
+        for need in &self.needs {
+            if need.intensity >= 1.0 {
+                return false;
+            }
+        }
+        true
+    }
+
     #[inline]
     pub fn id(&self) -> EntityId {
         self.id

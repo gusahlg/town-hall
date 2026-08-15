@@ -19,58 +19,41 @@ use goods::canonical_amounts;
 
 #[derive(Debug)]
 pub struct Economy {
-    resources: Resources,
     resource_unit_goods: Vec<GoodId>,
     goods: Vec<GoodEntry>,
     good_ids: HashMap<Good, GoodId>,
 }
 
 impl Economy {
-    pub fn new(resource_dimensions: usize) -> Self {
-        Self {
-            resources: Resources::new(resource_dimensions),
-            resource_unit_goods: Vec::new(),
+    /// Every possible `u8` is a valid primitive resource, so the unit good of
+    /// each lattice point exists from the start.
+    pub fn new() -> Self {
+        let mut economy = Self {
+            resource_unit_goods: Vec::with_capacity(RESOURCE_COUNT),
             goods: Vec::new(),
             good_ids: HashMap::new(),
+        };
+        for raw in 0..=u8::MAX {
+            let unit_good = economy
+                .register_good(vec![Component {
+                    resource: ResourceId(raw),
+                    quantity: 1,
+                }])
+                .expect("the good ID space holds every resource unit good");
+            economy.resource_unit_goods.push(unit_good);
         }
-    }
-
-    #[inline]
-    pub fn resources(&self) -> &Resources {
-        &self.resources
-    }
-
-    pub fn register_resource(&mut self, properties: PropertyPoint) -> Result<ResourceId> {
-        ensure!(
-            GoodId::from_index(self.goods.len()).is_some(),
-            "cannot register a resource because the good ID space is exhausted"
-        );
-        let resource = self.resources.register(properties)?;
-        debug_assert_eq!(resource.index(), self.resource_unit_goods.len());
-        let unit_good = self.register_good(vec![Component {
-            resource,
-            quantity: 1,
-        }])?;
-        self.resource_unit_goods.push(unit_good);
-        Ok(resource)
+        economy
     }
 
     /// The canonical `[(resource, 1)]` configuration used when one extracted
     /// unit enters the economy. Provenance does not affect this `GoodId`.
-    pub fn resource_unit_good(&self, resource: ResourceId) -> Option<GoodId> {
-        self.resource_unit_goods.get(resource.index()).copied()
+    pub fn resource_unit_good(&self, resource: ResourceId) -> GoodId {
+        self.resource_unit_goods[resource.index()]
     }
 
     /// Registers a design by exact ordered configuration. This does not produce
     /// an inventory unit; manufacture still requires a recipe and process.
     pub fn register_good(&mut self, configuration: Vec<Component>) -> Result<GoodId> {
-        for component in &configuration {
-            ensure!(
-                self.resources.get(component.resource).is_some(),
-                "good contains unknown resource {:?}",
-                component.resource
-            );
-        }
         let good = Good::new(configuration);
         if let Some(&id) = self.good_ids.get(&good) {
             return Ok(id);
@@ -181,7 +164,7 @@ impl Economy {
 
 impl Default for Economy {
     fn default() -> Self {
-        Self::new(DEFAULT_RESOURCE_DIMENSIONS)
+        Self::new()
     }
 }
 
@@ -224,11 +207,9 @@ mod tests {
 
     #[test]
     fn inventory_multiplicity_is_not_product_structure() {
-        let mut economy = Economy::new(1);
-        let resource = economy
-            .register_resource(PropertyPoint::new([0.5].as_slice()).unwrap())
-            .unwrap();
-        let unit = economy.resource_unit_good(resource).unwrap();
+        let mut economy = Economy::new();
+        let resource = ResourceId(0);
+        let unit = economy.resource_unit_good(resource);
         let duplicate_unit = economy
             .register_good(vec![Component {
                 resource,

@@ -67,13 +67,12 @@ process.
 
 3. **Generate the primitive physical world.** — **Previously identified, expanded**
 
-   Resource identities and their property positions are fixed after world
-   generation, but the actual generation rule is still missing. The simulation
-   needs to decide how many resources exist, how their points are distributed in
-   the configured property space, how deposits are distributed geographically,
-   and how abundance varies. Naive uniform random points can behave surprisingly
-   in high dimensions, where almost every pair becomes similarly distant, so the
-   generator will strongly shape substitutability.
+   Resource identities and property positions are now fixed by construction:
+   the 256 flat `u8` resources each encode one point of the compile-time
+   property lattice, independent of world generation. The remaining question is
+   geographic: how deposits are distributed across tiles and how abundance
+   varies, including whether every lattice resource occurs naturally or some
+   exist only as unextractable design points.
 
    Deposit generation must also guarantee a viable starting world rather than a
    formally valid but economically unreachable one. Seeds, reproducibility, and

@@ -18,17 +18,7 @@ impl Affine {
     }
 
     #[inline]
-    fn normalized(self, value: f32) -> f32 {
-        let normalized = if value.abs() > 1.0e-12 {
-            value.signum()
-        } else {
-            0.0
-        };
-        self.scale * normalized + self.bias
-    }
-
-    #[inline]
-    fn invariant(self, value: f32) -> f32 {
+    fn apply(self, value: f32) -> f32 {
         self.scale * value + self.bias
     }
 }
@@ -39,10 +29,13 @@ struct LayerParameters {
     bias: Affine,
 }
 
-/// Minimal ReLU Monomial-NFN reader: observer-specific channel affines followed
-/// by the HNPS invariant pooling pattern from the reference implementation.
-/// Positive hidden-neuron rescaling is removed per scalar and hidden-neuron
-/// permutations are removed by pooling. Every source weight and bias is read.
+/// Minimal ReLU Monomial-NFN reader: sequential neuron-norm canonicalization
+/// followed by observer-specific channel affines and the HNPS invariant
+/// pooling pattern. Each hidden neuron's source-scaled incoming weights and
+/// bias define an RMS scale that divides its incoming values and multiplies
+/// its outgoing weights, so positive hidden-neuron rescaling is removed while
+/// every relative magnitude survives; hidden-neuron permutations are removed
+/// by pooling. Every source weight and bias is read.
 #[derive(Debug)]
 pub struct MonomialNfnPool {
     dense_layer_count: usize,
@@ -153,62 +146,100 @@ impl MonomialNfnPool {
             [observer * self.dense_layer_count..(observer + 1) * self.dense_layer_count];
         let layers = observed_brains.layers();
         let mut cursor = 0;
+        // Canonical scales of the current layer's source neurons; the fixed
+        // action inputs are unscaled.
+        let mut scales = vec![1.0_f32; layers[0].input_size()];
+        let mut next_scales: Vec<f32> = Vec::new();
 
         for (layer_index, (layer, parameters)) in layers.iter().zip(parameters).enumerate() {
             let weights = layer.network_weights(observed);
             let biases = layer.network_biases(observed);
             let is_first = layer_index == 0;
             let is_last = layer_index + 1 == layers.len();
+            let (input_size, output_size) = (layer.input_size(), layer.output_size());
+
+            if !is_last {
+                // RMS over a target neuron's source-scaled incoming weights
+                // and bias: equivariant to that neuron's positive rescaling,
+                // invariant to all earlier ones. Dead neurons keep zero.
+                next_scales.clear();
+                next_scales.extend((0..output_size).map(|target| {
+                    let mut sum = biases[target].to_f32().powi(2);
+                    for source in 0..input_size {
+                        let value =
+                            weights[source * output_size + target].to_f32() * scales[source];
+                        sum += value * value;
+                    }
+                    (sum / (input_size + 1) as f32).sqrt()
+                }));
+            }
+            let canonical = |source: usize, target: usize| -> f32 {
+                let value = weights[source * output_size + target].to_f32() * scales[source];
+                if is_last {
+                    value
+                } else if next_scales[target] > 0.0 {
+                    value / next_scales[target]
+                } else {
+                    0.0
+                }
+            };
 
             if is_first {
                 // The action inputs have fixed meanings, so retain one pooled
                 // feature per input while removing first-hidden-neuron order.
-                for input in 0..layer.input_size() {
+                for input in 0..input_size {
                     let mut sum = 0.0;
-                    for hidden in 0..layer.output_size() {
-                        sum += parameters
-                            .weight
-                            .normalized(weights[input * layer.output_size() + hidden]);
+                    for hidden in 0..output_size {
+                        sum += parameters.weight.apply(canonical(input, hidden));
                     }
-                    output[cursor] = sum / layer.output_size() as f32;
+                    output[cursor] = sum / output_size as f32;
                     cursor += 1;
                 }
             } else if is_last {
                 // Action outputs also have fixed meanings. Pool only over the
                 // final hidden layer and retain one feature per output.
-                for action_output in 0..layer.output_size() {
+                for action_output in 0..output_size {
                     let mut sum = 0.0;
-                    for hidden in 0..layer.input_size() {
-                        sum += parameters
-                            .weight
-                            .normalized(weights[hidden * layer.output_size() + action_output]);
+                    for hidden in 0..input_size {
+                        sum += parameters.weight.apply(canonical(hidden, action_output));
                     }
-                    output[cursor] = sum / layer.input_size() as f32;
+                    output[cursor] = sum / input_size as f32;
                     cursor += 1;
                 }
             } else {
-                let sum: f32 = weights
-                    .iter()
-                    .map(|&value| parameters.weight.normalized(value))
-                    .sum();
-                output[cursor] = sum / weights.len() as f32;
+                let mut sum = 0.0;
+                for source in 0..input_size {
+                    for target in 0..output_size {
+                        sum += parameters.weight.apply(canonical(source, target));
+                    }
+                }
+                output[cursor] = sum / (input_size * output_size) as f32;
                 cursor += 1;
             }
 
             if is_last {
-                // Output biases are already invariant to hidden permutations
-                // and positive hidden-neuron rescaling, so retain all of them.
+                // Output biases are outside every hidden symmetry, so retain
+                // all of them at full value.
                 for &bias in biases {
-                    output[cursor] = parameters.bias.invariant(bias);
+                    output[cursor] = parameters.bias.apply(bias.to_f32());
                     cursor += 1;
                 }
             } else {
-                let sum: f32 = biases
-                    .iter()
-                    .map(|&value| parameters.bias.normalized(value))
-                    .sum();
+                let mut sum = 0.0;
+                for (target, &bias) in biases.iter().enumerate() {
+                    let canonical_bias = if next_scales[target] > 0.0 {
+                        bias.to_f32() / next_scales[target]
+                    } else {
+                        0.0
+                    };
+                    sum += parameters.bias.apply(canonical_bias);
+                }
                 output[cursor] = sum / biases.len() as f32;
                 cursor += 1;
+            }
+
+            if !is_last {
+                std::mem::swap(&mut scales, &mut next_scales);
             }
         }
 
@@ -223,7 +254,7 @@ impl MonomialNfnPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neuro_ash::NetworkShape;
+    use neuro_ash::{NetworkShape, f16};
 
     fn action_pool(seed: u64) -> DenseNetworkPool {
         let mut random = Random::new(seed);
@@ -249,7 +280,7 @@ mod tests {
         let original = action_pool(7);
         let mut transformed = action_pool(7);
         let hidden = 2;
-        let scale = 3.5;
+        let scale = f16::from_f32(3.5);
         let first_output = ACTION_LAYER_SIZES[1];
 
         {
@@ -273,7 +304,48 @@ mod tests {
         let mut right = vec![0.0; MONOMIAL_FEATURE_COUNT];
         readers.read_into(0, &original, 0, &mut left).unwrap();
         readers.read_into(0, &transformed, 0, &mut right).unwrap();
-        assert_eq!(left, right);
+        let max_error = left
+            .iter()
+            .zip(&right)
+            .map(|(left, right)| (left - right).abs())
+            .fold(0.0_f32, f32::max);
+        // The scaled parameters are themselves rounded to f16 storage, so the
+        // reading is invariant only up to that rounding.
+        assert!(max_error <= 2.0e-2, "rescaling error {max_error}");
+    }
+
+    #[test]
+    fn uncompensated_magnitude_changes_are_visible() {
+        let original = action_pool(13);
+        let mut transformed = action_pool(13);
+        let hidden = 5;
+        let first_output = ACTION_LAYER_SIZES[1];
+
+        // Scale one hidden neuron's incoming weights without touching its
+        // bias or compensating downstream. This changes the network function
+        // but no weight signs, so a sign-only reading cannot see it.
+        {
+            let weights = transformed.network_weights_mut(0, 0).unwrap();
+            for input in 0..ACTION_LAYER_SIZES[0] {
+                weights[input * first_output + hidden] *= f16::from_f32(3.5);
+            }
+        }
+
+        let mut random = Random::new(14);
+        let readers = MonomialNfnPool::new(&original, &mut random);
+        let mut left = vec![0.0; MONOMIAL_FEATURE_COUNT];
+        let mut right = vec![0.0; MONOMIAL_FEATURE_COUNT];
+        readers.read_into(0, &original, 0, &mut left).unwrap();
+        readers.read_into(0, &transformed, 0, &mut right).unwrap();
+        let max_difference = left
+            .iter()
+            .zip(&right)
+            .map(|(left, right)| (left - right).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_difference > 1.0e-3,
+            "a functional magnitude change was invisible: {max_difference}"
+        );
     }
 
     #[test]

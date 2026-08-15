@@ -4,8 +4,8 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, RichText, Vec2};
 
 use crate::{
-    SimulationCommand, SimulationSnapshot, SimulationSource, accent, entity_view, market_view,
-    muted, world_view,
+    DEFAULT_POPULATION, SimulationCommand, SimulationSnapshot, SimulationSource, accent,
+    entity_view, market_view, muted, world_view,
 };
 
 const HISTORY_LENGTH: usize = 120;
@@ -50,7 +50,7 @@ impl TownHallApp {
             selected_entity: None,
             inspector_tab: InspectorTab::Entities,
             entity_search: String::new(),
-            desired_population: 96,
+            desired_population: DEFAULT_POPULATION,
             show_entity_labels: false,
             show_goods: true,
             show_resources: true,
@@ -206,8 +206,8 @@ impl TownHallApp {
                 ui.label(RichText::new("Population").color(muted()));
                 ui.add(
                     egui::DragValue::new(&mut self.desired_population)
-                        .range(1..=2_000)
-                        .speed(1),
+                        .range(1..=u32::MAX)
+                        .speed(25),
                 );
                 if ui
                     .add_sized(

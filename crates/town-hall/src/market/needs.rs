@@ -25,15 +25,6 @@ impl Need {
             recovery_rate.is_finite() && recovery_rate >= 0.0,
             "need recovery rate must be finite and nonnegative"
         );
-        if let Some(first) = target.first() {
-            ensure!(
-                target
-                    .iter()
-                    .all(|component| component.ideal.coordinates().len()
-                        == first.ideal.coordinates().len()),
-                "all need components must occupy the same property space"
-            );
-        }
         Ok(Self {
             target: target.into_boxed_slice(),
             intensity,

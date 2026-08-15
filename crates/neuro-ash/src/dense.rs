@@ -2,6 +2,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Result, ensure};
+use half::f16;
 
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -104,9 +105,10 @@ pub struct DenseLayerPool {
     input_size: usize,
     output_size: usize,
     /// `[network, input, output]`, contiguous and ready for rank-3 BMM.
-    weights: Vec<f32>,
+    /// Parameters are stored as f16; every forward accumulates in f32.
+    weights: Vec<f16>,
     /// `[network, output]`.
-    biases: Vec<f32>,
+    biases: Vec<f16>,
     revision: u64,
 }
 
@@ -143,32 +145,34 @@ impl DenseLayerPool {
     }
 
     #[inline]
-    pub fn weights(&self) -> &[f32] {
+    pub fn weights(&self) -> &[f16] {
         &self.weights
     }
 
     #[inline]
-    pub fn biases(&self) -> &[f32] {
+    pub fn biases(&self) -> &[f16] {
         &self.biases
     }
 
-    pub fn network_weights(&self, network: usize) -> &[f32] {
+    pub fn network_weights(&self, network: usize) -> &[f16] {
         let stride = self.input_size * self.output_size;
         &self.weights[network * stride..(network + 1) * stride]
     }
 
-    pub fn network_biases(&self, network: usize) -> &[f32] {
+    pub fn network_biases(&self, network: usize) -> &[f16] {
         &self.biases[network * self.output_size..(network + 1) * self.output_size]
     }
 
     fn push_random(&mut self, random: &mut Random) {
         let limit = (6.0 / (self.input_size + self.output_size) as f32).sqrt();
-        self.weights
-            .extend((0..self.input_size * self.output_size).map(|_| random.symmetric(limit)));
+        self.weights.extend(
+            (0..self.input_size * self.output_size)
+                .map(|_| f16::from_f32(random.symmetric(limit))),
+        );
         // Biases are random as part of an entity's completely random initial
         // brain. A smaller limit keeps the first forwards numerically calm.
         self.biases
-            .extend((0..self.output_size).map(|_| random.symmetric(limit * 0.25)));
+            .extend((0..self.output_size).map(|_| f16::from_f32(random.symmetric(limit * 0.25))));
         self.bump_revision();
     }
 
@@ -206,6 +210,8 @@ impl DenseLayerPool {
 }
 
 /// Equal-shaped private networks held as one layer-major parameter pool.
+/// Parameters are stored as f16; the mutation APIs accept f32 values and
+/// round them to the nearest half, and evaluation accumulates in f32.
 #[derive(Debug)]
 pub struct DenseNetworkPool {
     id: u64,
@@ -263,7 +269,7 @@ impl DenseNetworkPool {
 
     /// Mutable parameters for one layer of one network. Taking this view marks
     /// the pool dirty so the next GPU evaluation uploads the changed values.
-    pub fn network_weights_mut(&mut self, layer: usize, network: usize) -> Result<&mut [f32]> {
+    pub fn network_weights_mut(&mut self, layer: usize, network: usize) -> Result<&mut [f16]> {
         ensure!(
             network < self.network_count,
             "network index {network} is out of bounds"
@@ -281,7 +287,7 @@ impl DenseNetworkPool {
     /// Mutable biases for one layer of one network. This is the evolution and
     /// experimentation seam; normal slot updates should use the narrower patch
     /// methods below.
-    pub fn network_biases_mut(&mut self, layer: usize, network: usize) -> Result<&mut [f32]> {
+    pub fn network_biases_mut(&mut self, layer: usize, network: usize) -> Result<&mut [f16]> {
         ensure!(
             network < self.network_count,
             "network index {network} is out of bounds"
@@ -350,7 +356,12 @@ impl DenseNetworkPool {
         );
         let stride = first.input_size * first.output_size;
         let start = network * stride + input * first.output_size;
-        first.weights[start..start + first.output_size].copy_from_slice(connections);
+        for (weight, &connection) in first.weights[start..start + first.output_size]
+            .iter_mut()
+            .zip(connections)
+        {
+            *weight = f16::from_f32(connection);
+        }
         first.bump_revision();
         Ok(())
     }
@@ -381,9 +392,9 @@ impl DenseNetworkPool {
         let weight_stride = last.input_size * last.output_size;
         let base = network * weight_stride;
         for (input, &value) in connections.iter().enumerate() {
-            last.weights[base + input * last.output_size + output] = value;
+            last.weights[base + input * last.output_size + output] = f16::from_f32(value);
         }
-        last.biases[network * last.output_size + output] = bias;
+        last.biases[network * last.output_size + output] = f16::from_f32(bias);
         last.bump_revision();
         Ok(())
     }
@@ -428,9 +439,10 @@ impl DenseNetworkPool {
                 let output_row = &mut outputs
                     [local_network * layer.output_size..(local_network + 1) * layer.output_size];
                 for output in 0..layer.output_size {
-                    let mut value = biases[output];
+                    let mut value = biases[output].to_f32();
                     for input in 0..layer.input_size {
-                        value += input_row[input] * weights[input * layer.output_size + output];
+                        value +=
+                            input_row[input] * weights[input * layer.output_size + output].to_f32();
                     }
                     if layer_index + 1 != self.layers.len() {
                         value = value.max(0.0);
@@ -517,10 +529,13 @@ mod tests {
         pool.set_input_connections(0, 1, &[7.0, 8.0]).unwrap();
         pool.set_output_neuron(0, 2, &[9.0, 10.0], 11.0).unwrap();
 
-        assert_eq!(&pool.layers()[0].network_weights(0)[2..4], &[7.0, 8.0]);
-        assert_eq!(pool.layers()[1].network_weights(0)[2], 9.0);
-        assert_eq!(pool.layers()[1].network_weights(0)[6], 10.0);
-        assert_eq!(pool.layers()[1].network_biases(0)[2], 11.0);
+        assert_eq!(
+            &pool.layers()[0].network_weights(0)[2..4],
+            &[f16::from_f32(7.0), f16::from_f32(8.0)]
+        );
+        assert_eq!(pool.layers()[1].network_weights(0)[2], f16::from_f32(9.0));
+        assert_eq!(pool.layers()[1].network_weights(0)[6], f16::from_f32(10.0));
+        assert_eq!(pool.layers()[1].network_biases(0)[2], f16::from_f32(11.0));
         assert_eq!(pool.layers()[0].network_weights(1), untouched_first);
         assert_eq!(pool.layers()[1].network_weights(1), untouched_last);
     }

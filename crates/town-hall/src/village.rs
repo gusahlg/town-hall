@@ -3,19 +3,18 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use anyhow::{Result, ensure};
-use neuro_ash::{BatchEvaluator, DenseNetworkPool, NetworkShape, Random};
+use neuro_ash::{BatchEvaluator, DenseNetworkPool, NetworkShape, Random, f16};
 use rayon::prelude::*;
 
 use crate::{
     ACTION_INPUT_COUNT, ACTION_LAYER_SIZES, ACTION_OUTPUT_COUNT, Action, BASE_INPUT_COUNT,
-    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED, Economy,
-    Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START, Inventory,
-    KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT, Need,
-    NeedComponent, PREDICT_OUTPUT_START, Position, PropertyPoint, ReaderKind, ReaderPool,
-    STARTING_POPULATION, World, give_output, predict_output,
+    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED, DIMENSIONS,
+    Economy, Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START,
+    INITIAL_ENTITY_MONEY, Inventory, KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool,
+    MONOMIAL_FEATURE_COUNT, Need, NeedComponent, PREDICT_OUTPUT_START, Position, PropertyPoint,
+    ReaderKind, ReaderPool, STARTING_POPULATION, World, give_output, predict_output,
 };
 
-const INITIAL_ENTITY_MONEY: u64 = 100;
 const BASELINE_NEED_RECOVERY_RATE: f32 = 0.05;
 const PARALLEL_READER_THRESHOLD: usize = 128;
 
@@ -31,7 +30,6 @@ struct SlotUpdatePlan {
     replacements: Vec<SlotReplacement>,
     observer_offsets: Vec<usize>,
     active_masks: Vec<[u64; KNOWN_PERSON_MASK_WORDS]>,
-    rounds: usize,
 }
 
 impl SlotUpdatePlan {
@@ -175,9 +173,8 @@ impl Village {
     /// With no satisfaction, this baseline becomes fatal after roughly 1,000
     /// state updates.
     fn baseline_person_needs(&self) -> Vec<Need> {
-        let dimensions = self.economy.resources().dimensions();
-        let ideal = PropertyPoint::new(vec![0.5; dimensions])
-            .expect("the economy has a non-empty finite property space");
+        let ideal = PropertyPoint::new([0.5; DIMENSIONS])
+            .expect("the baseline ideal point is finite");
         vec![
             Need::new(
                 vec![NeedComponent { ideal, quantity: 1 }],
@@ -198,22 +195,22 @@ impl Village {
         Ok(removed)
     }
 
-    pub fn action_weights_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f32]> {
+    pub fn action_weights_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f16]> {
         let entity = self.entity_index(id)?;
         self.action_brains.network_weights_mut(layer, entity)
     }
 
-    pub fn action_biases_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f32]> {
+    pub fn action_biases_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f16]> {
         let entity = self.entity_index(id)?;
         self.action_brains.network_biases_mut(layer, entity)
     }
 
-    pub fn get_to_know_weights_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f32]> {
+    pub fn get_to_know_weights_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f16]> {
         let entity = self.entity_index(id)?;
         self.get_to_know_brains.network_weights_mut(layer, entity)
     }
 
-    pub fn get_to_know_biases_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f32]> {
+    pub fn get_to_know_biases_mut(&mut self, id: EntityId, layer: usize) -> Result<&mut [f16]> {
         let entity = self.entity_index(id)?;
         self.get_to_know_brains.network_biases_mut(layer, entity)
     }
@@ -245,12 +242,6 @@ impl Village {
         }
 
         let plan = self.plan_slot_updates();
-        if plan.rounds > 0 {
-            // The action pool is read on the CPU while impressions are formed.
-            // Its device copy cannot be reused after the generated patches, so
-            // release it before allocating get-to-know tensors.
-            evaluator.release(&self.action_brains);
-        }
         let mut pending = vec![None; plan.replacements.len()];
         let population = self.population.len();
 
@@ -298,10 +289,9 @@ impl Village {
                 }
             }
         }
-        // Get-to-know and action inference are sequential phases. Keeping both
-        // parameter families resident would consume device memory for a pool
-        // that cannot run again during this tick.
-        evaluator.release(&self.get_to_know_brains);
+        // Both pools stay device-resident across phases and ticks: the f16
+        // parameters fit together on an 8 GiB device, and layers whose host
+        // revisions are unchanged skip their next upload entirely.
 
         // Atomic at the simulation level: metadata remains unchanged until all
         // generated bundles exist, and no action runs until every changed slot
@@ -494,7 +484,6 @@ impl Village {
         let mut observer_offsets = Vec::with_capacity(self.population.len() + 1);
         let mut active_masks = Vec::with_capacity(self.population.len());
         observer_offsets.push(0);
-        let mut rounds = 0;
 
         for observer in 0..self.population.len() {
             let observer_id = self.population[observer].id();
@@ -527,7 +516,6 @@ impl Village {
                 }
             }
 
-            let start = replacements.len();
             let mut free_slot = 0;
             for (position, is_present) in present.iter().copied().take(desired_len).enumerate() {
                 if is_present {
@@ -548,7 +536,6 @@ impl Village {
                 });
                 free_slot += 1;
             }
-            rounds = rounds.max(replacements.len() - start);
             observer_offsets.push(replacements.len());
             active_masks.push(active_mask);
         }
@@ -557,7 +544,6 @@ impl Village {
             replacements,
             observer_offsets,
             active_masks,
-            rounds,
         }
     }
 

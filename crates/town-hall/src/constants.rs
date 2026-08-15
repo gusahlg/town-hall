@@ -1,8 +1,11 @@
 //! Architectural constants. The social slot count and the action-head layout
 //! are deliberate simulation rules; derived counts must not be tuned by hand.
 
-pub const STARTING_POPULATION: usize = 25_001;
+pub const STARTING_POPULATION: usize = 50_000;
 pub const DEFAULT_RANDOM_SEED: u64 = 0x5eed_5eed_cafe_babe;
+/// Every client seeds new people with the same money so native, web, and CLI
+/// sessions start from identical conditions.
+pub const INITIAL_ENTITY_MONEY: u64 = 100;
 
 pub const KNOWN_PERSON_COUNT: usize = 200;
 pub const KNOWN_PERSON_MASK_WORDS: usize = KNOWN_PERSON_COUNT.div_ceil(64);
@@ -59,3 +62,7 @@ pub const fn give_output(slot: usize) -> usize {
 const _: () = assert!(MONOMIAL_FEATURE_COUNT == 1010);
 const _: () = assert!(ACTION_OUTPUT_COUNT == 401);
 const _: () = assert!(CONNECTION_BUNDLE_SIZE == 72);
+const _: () = assert!(
+    STARTING_POPULATION <= neuro_ash::DEFAULT_MAX_GPU_BATCH_SIZE,
+    "the starting population must stay single-chunk resident on the GPU",
+);

@@ -12,9 +12,10 @@ use crate::DenseNetworkPool;
 
 /// Bounds persistent device memory independently of simulation population.
 /// Larger populations are evaluated as consecutive chunks through the same
-/// tensors. Keeping this at 25,000 preserves full-residency for the current
-/// model on an 8 GiB GPU while giving larger runs a non-OOM execution path.
-pub const DEFAULT_MAX_GPU_BATCH_SIZE: usize = 25_000;
+/// tensors. With f16 parameters, 50,000 keeps both simulation pools fully
+/// resident together on an 8 GiB GPU while giving larger runs a non-OOM
+/// execution path.
+pub const DEFAULT_MAX_GPU_BATCH_SIZE: usize = 50_000;
 const CACHE_SHRINK_FACTOR: usize = 4;
 
 pub trait BatchEvaluator {
@@ -86,7 +87,7 @@ impl DeviceNetworkPool {
         let mut layers = Vec::with_capacity(host.shape().layer_count());
         for layer in host.layers() {
             layers.push(DeviceLayerPool {
-                weights: Tensor::uninit_device(
+                weights: Tensor::uninit_device_f16(
                     context,
                     &[
                         batch,
@@ -144,20 +145,27 @@ impl DeviceNetworkPool {
             "host network range exceeds device capacity"
         );
         let same_range = self.loaded_range.as_ref() == Some(&networks);
+        let mut bias_scratch = Vec::new();
         for (device, layer) in self.layers.iter_mut().zip(host.layers()) {
             if same_range && device.host_revision == Some(layer.revision()) {
                 continue;
             }
             let weight_stride = layer.input_size() * layer.output_size();
-            executor.upload(
-                &layer.weights()[networks.start * weight_stride..networks.end * weight_stride],
+            executor.upload_f16(
+                bytemuck::cast_slice(
+                    &layer.weights()[networks.start * weight_stride..networks.end * weight_stride],
+                ),
                 &device.weights,
             )?;
-            executor.upload(
-                &layer.biases()
-                    [networks.start * layer.output_size()..networks.end * layer.output_size()],
-                &device.biases,
-            )?;
+            // The matmul epilogue requires f32 biases on the device.
+            bias_scratch.clear();
+            bias_scratch.extend(
+                layer.biases()
+                    [networks.start * layer.output_size()..networks.end * layer.output_size()]
+                    .iter()
+                    .map(|bias| bias.to_f32()),
+            );
+            executor.upload(&bias_scratch, &device.biases)?;
             device.host_revision = Some(layer.revision());
         }
         self.loaded_range = Some(networks);
@@ -229,6 +237,13 @@ impl Gpu {
             "GPU batch size must be greater than zero"
         );
         let context = VulkanContext::new(false)?;
+        // Fail here rather than at first evaluation so callers fall back to
+        // the CPU evaluator on devices without 16-bit storage.
+        ensure!(
+            context.f16_storage_enabled,
+            "device {} does not support the f16 storage this evaluator requires",
+            context.device_name()
+        );
         let pipeline = Arc::new(MatmulPipeline::new(&context)?);
         let executor = Executor::new(context.clone(), pipeline, 2, 64)?;
         Ok(Self {

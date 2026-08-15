@@ -5,9 +5,11 @@ neural/social decision architecture.
 
 ## Economic foundation
 
-Primitive resources occupy immutable points in a configurable property space.
-Goods are canonical ordered resource-and-quantity configurations stored once in
-an append-only registry. Inventories contain only stable `GoodId`s and quantities.
+The 256 primitive resources are flat `u8` IDs that each compactly encode one
+point of an N-dimensional property lattice; coordinates and normalized geometric
+similarity are derived from the ID rather than stored. Goods are canonical
+ordered resource-and-quantity configurations stored once in an append-only
+registry. Inventories contain only stable `GoodId`s and quantities.
 
 Needs are ordered configurations of ideal property points and quantities. Recipes
 use canonical unordered input multisets and registration enforces flattened
@@ -38,8 +40,10 @@ money; `Predict` and `Conserve` currently have no world effect. There are no fak
 consumption, production, income, or death rules.
 
 `neuro-ash` evaluates aligned private networks on CPU or Vulkan and streams large
-populations through bounded GPU batches. Current networks cost about 212 KB per
-entity, so very large populations will require a later representation decision.
+populations through bounded GPU batches. Parameters are stored as f16 and every
+forward accumulates in f32 on both backends. Current networks cost about 106 KB
+per entity, so very large populations will require a later representation
+decision.
 
 ## Workspace
 
@@ -51,8 +55,9 @@ entity, so very large populations will require a later representation decision.
 
 The native dashboard runs the real `Village` on a worker thread and prefers the
 Vulkan evaluator, falling back to CPU when Vulkan is unavailable. The browser
-uses the same GUI against a small deterministic local session: the simulation
-core remains native-only because its unchanged neural stack depends on Vulkan.
+uses the same GUI against a deterministic local session with the same starting
+population, money, and goods: the simulation core remains native-only because
+its unchanged neural stack depends on Vulkan.
 
 ## Run and verify
 

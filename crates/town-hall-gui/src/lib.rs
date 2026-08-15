@@ -14,6 +14,14 @@ pub use app::TownHallApp;
 
 use eframe::egui;
 
+/// Session defaults shared by every client. The web build cannot depend on
+/// the native-only simulation crate, so these mirror `town_hall`'s constants;
+/// the native module pins the pairing with compile-time asserts.
+pub const DEFAULT_POPULATION: u32 = 50_000;
+pub const DEFAULT_ENTITY_MONEY: u64 = 100;
+pub const DEFAULT_WORLD_WIDTH: u32 = 150;
+pub const DEFAULT_WORLD_HEIGHT: u32 = 150;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityKind {
     Person,
@@ -97,8 +105,8 @@ impl SimulationSnapshot {
     fn loading() -> Self {
         Self {
             iteration: 0,
-            width: 150,
-            height: 150,
+            width: DEFAULT_WORLD_WIDTH,
+            height: DEFAULT_WORLD_HEIGHT,
             total_money: 0,
             total_inventory: 0,
             total_material: 0,
@@ -131,7 +139,7 @@ pub fn native_app(cc: &eframe::CreationContext<'_>) -> TownHallApp {
 
 #[cfg(target_arch = "wasm32")]
 pub fn web_app(cc: &eframe::CreationContext<'_>) -> TownHallApp {
-    TownHallApp::new(cc, Box::new(DemoSimulation::new(96)))
+    TownHallApp::new(cc, Box::new(DemoSimulation::new(DEFAULT_POPULATION)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -144,11 +152,17 @@ mod native {
     use town_hall::{Action, DEFAULT_RANDOM_SEED, EntityKind as ModelEntityKind, Village};
 
     use super::{
-        ActionKind, ActivitySnapshot, EntityKind, EntitySnapshot, GoodSnapshot, HoldingSnapshot,
-        ResourceSnapshot, SimulationCommand, SimulationSnapshot, SimulationSource,
+        ActionKind, ActivitySnapshot, DEFAULT_ENTITY_MONEY, DEFAULT_POPULATION,
+        DEFAULT_WORLD_HEIGHT, DEFAULT_WORLD_WIDTH, EntityKind, EntitySnapshot, GoodSnapshot,
+        HoldingSnapshot, ResourceSnapshot, SimulationCommand, SimulationSnapshot, SimulationSource,
     };
 
-    const DEFAULT_POPULATION: u32 = 96;
+    const _: () = assert!(DEFAULT_POPULATION as usize == town_hall::STARTING_POPULATION);
+    const _: () = assert!(DEFAULT_ENTITY_MONEY == town_hall::INITIAL_ENTITY_MONEY);
+    const _: () = assert!(
+        DEFAULT_WORLD_WIDTH == town_hall::DEFAULT_WORLD_WIDTH
+            && DEFAULT_WORLD_HEIGHT == town_hall::DEFAULT_WORLD_HEIGHT
+    );
 
     enum WorkerCommand {
         Simulation(SimulationCommand),
@@ -359,6 +373,7 @@ mod native {
 #[cfg(target_arch = "wasm32")]
 struct DemoSimulation {
     snapshot: SimulationSnapshot,
+    dirty: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -366,43 +381,41 @@ impl DemoSimulation {
     fn new(population: u32) -> Self {
         let mut simulation = Self {
             snapshot: SimulationSnapshot::loading(),
+            dirty: true,
         };
         simulation.reset(population);
         simulation
     }
 
+    /// Mirrors the native model's start: every person owns the same money, no
+    /// goods or deposits exist yet, and people fill the world's tiles in spawn
+    /// order.
     fn reset(&mut self, population: u32) {
+        let tile_count = DEFAULT_WORLD_WIDTH * DEFAULT_WORLD_HEIGHT;
         self.snapshot = SimulationSnapshot {
             iteration: 0,
-            width: 48,
-            height: 32,
+            width: DEFAULT_WORLD_WIDTH,
+            height: DEFAULT_WORLD_HEIGHT,
             total_money: 0,
             total_inventory: 0,
-            total_material: 87_400,
+            total_material: 0,
             entities: (0..population)
-                .map(|id| EntitySnapshot {
-                    id: u128::from(id),
-                    kind: EntityKind::Person,
-                    x: (id.wrapping_mul(17).wrapping_add(3)) % 48,
-                    y: (id.wrapping_mul(11).wrapping_add(7)) % 32,
-                    money: 70 + u64::from((id * 37) % 90),
-                    inventory: vec![HoldingSnapshot {
-                        good: (id % 4) as usize,
-                        quantity: 1 + (id % 8),
-                    }],
-                    action: ActionKind::Conserve,
-                    action_label: "Conserve".into(),
+                .map(|id| {
+                    let tile = id % tile_count;
+                    EntitySnapshot {
+                        id: u128::from(id),
+                        kind: EntityKind::Person,
+                        x: tile % DEFAULT_WORLD_WIDTH,
+                        y: tile / DEFAULT_WORLD_WIDTH,
+                        money: DEFAULT_ENTITY_MONEY,
+                        inventory: Vec::new(),
+                        action: ActionKind::Conserve,
+                        action_label: "Conserve".into(),
+                    }
                 })
                 .collect(),
             goods: Vec::new(),
-            resources: (0..24)
-                .map(|index| ResourceSnapshot {
-                    x: (index * 19 + 5) % 48,
-                    y: (index * 13 + 4) % 32,
-                    resource: (index % 3) as usize,
-                    quantity: 1_000 + index * 225,
-                })
-                .collect(),
+            resources: Vec::new(),
             activity: ActivitySnapshot::default(),
             backend: "WebAssembly · local preview".into(),
             status: "Interactive browser session".into(),
@@ -414,6 +427,7 @@ impl DemoSimulation {
     fn advance(&mut self) {
         self.snapshot.iteration += 1;
         let tick = self.snapshot.iteration;
+        let population = self.snapshot.entities.len().max(1) as u128;
         for entity in &mut self.snapshot.entities {
             let phase = (entity.id + tick) % 11;
             entity.x = (entity.x + u32::from(phase == 2)) % self.snapshot.width;
@@ -425,11 +439,11 @@ impl DemoSimulation {
                 }
                 6..=8 => {
                     entity.action = ActionKind::Predict;
-                    entity.action_label = format!("Predict → #{}", (entity.id + 7) % 96);
+                    entity.action_label = format!("Predict → #{}", (entity.id + 7) % population);
                 }
                 _ => {
                     entity.action = ActionKind::Give;
-                    entity.action_label = format!("Give 1 → #{}", (entity.id + 1) % 96);
+                    entity.action_label = format!("Give 1 → #{}", (entity.id + 1) % population);
                     entity.money = entity.money.saturating_sub(1);
                 }
             }
@@ -488,9 +502,15 @@ impl SimulationSource for DemoSimulation {
             }
             SimulationCommand::Reset { population } => self.reset(population),
         }
+        self.dirty = true;
     }
 
     fn latest(&mut self) -> Option<SimulationSnapshot> {
+        // Cloning the full population is only worthwhile when it changed.
+        if !self.dirty {
+            return None;
+        }
+        self.dirty = false;
         Some(self.snapshot.clone())
     }
 }

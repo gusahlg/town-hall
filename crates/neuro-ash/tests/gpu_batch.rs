@@ -1,4 +1,4 @@
-use neuro_ash::{BatchEvaluator, CpuEvaluator, DenseNetworkPool, Gpu, NetworkShape, Random};
+use neuro_ash::{BatchEvaluator, CpuEvaluator, DenseNetworkPool, Gpu, NetworkShape, Random, f16};
 
 fn assert_close(actual: &[f32], expected: &[f32]) {
     assert_eq!(actual.len(), expected.len());
@@ -58,7 +58,7 @@ fn cached_pool_tracks_parameter_changes_and_population_shrink() {
     let initial = gpu.evaluate(&pool, &inputs).unwrap();
     assert_close(&initial, &cpu.evaluate(&pool, &inputs).unwrap());
 
-    pool.network_biases_mut(1, 3).unwrap()[2] += 1.25;
+    pool.network_biases_mut(1, 3).unwrap()[2] += f16::from_f32(1.25);
     let after_mutation = gpu.evaluate(&pool, &inputs).unwrap();
     assert_close(&after_mutation, &cpu.evaluate(&pool, &inputs).unwrap());
     assert_ne!(after_mutation, initial);

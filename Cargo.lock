@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "tensor-ash"
-version = "2.0.0"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "ash",

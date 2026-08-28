@@ -17,8 +17,18 @@ impl Position {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceDeposit {
-    pub resource: ResourceId,
-    pub quantity: Quantity,
+    pub resources: Vec<ResourceInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceInfo {
+    resource_id: ResourceId,
+    quantity: Quantity,
+    recovery_rate: u16,
+    properties: DepositProperties,
+}
+pub struct DepositProperties {
+
 }
 
 #[derive(Debug, Default)]

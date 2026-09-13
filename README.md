@@ -16,9 +16,43 @@ use canonical unordered input multisets and registration enforces flattened
 primitive-material conservation. Processes record workers, time, exact equipment,
 supporting consumables, and extra inputs lost to inefficiency.
 
-The world is a tile grid containing primitive deposits, and every entity has one
-location. Similarity, consumption, extraction, production, labor, transport,
+The world is a seeded tile grid containing primitive deposits, and every entity
+has one location. Similarity, consumption, extraction, production, labor, transport,
 prices, innovation, feasibility, and bootstrapping remain deliberately unchosen.
+
+## World generation
+
+`World::default()` generates a 150 × 150 map. `World::with_seed(width, height,
+seed)` reproduces a map without consuming the population's random stream;
+`Village::with_population(population, seed)` uses that seed for its world too.
+For custom density, keep and report the generator settings alongside the map
+dimensions when recording an experiment:
+
+```rust
+use town_hall::{Generator, RandomGenerator};
+
+let generator = RandomGenerator { seed: 42, deposit_chance: 35 };
+let world = generator.generate(150, 150);
+println!("150 × 150, {generator:?}: {} primitive units", world.total_deposited_material());
+```
+
+Each tile independently has a 35% chance of holding 1–3 deposits. Each deposit
+contains 1–3 distinct primitive resources, sampled across all 256 IDs, with
+100–10,000 units each. Property-space similarity does not determine geography,
+and small maps need not contain every resource. Recovery is per resource: 75%
+have rate zero, and 25% have a nominal rate of 1–10 primitive units per tick.
+
+Extraction properties belong to the whole deposit: time 1–16, parallelisation
+1–8, gear 0–4, efficiency 25–100%, and batch size 1–16. These are baseline
+parameters for future extraction rules. The first spawn tile, `(0, 0)`, always
+has a deposit with no gear requirement, time and batch size of one, and 100%
+efficiency, even at zero density. This guarantees starting material, while
+economic viability still depends on extraction and production being implemented.
+Generation does not create owned goods, execute extraction, or apply recovery.
+`World::empty(width, height)` remains available for hand-built scenarios.
+
+The native dashboard displays generated material. The browser's local preview
+does not run the native generator and currently shows no deposits.
 
 ## Neural/social architecture
 

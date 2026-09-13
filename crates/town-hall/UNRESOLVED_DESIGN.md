@@ -67,17 +67,18 @@ process.
 
 3. **Generate the primitive physical world.** — **Previously identified, expanded**
 
-   Resource identities and property positions are now fixed by construction:
-   the 256 flat `u8` resources each encode one point of the compile-time
-   property lattice, independent of world generation. The remaining question is
-   geographic: how deposits are distributed across tiles and how abundance
-   varies, including whether every lattice resource occurs naturally or some
-   exist only as unextractable design points.
+   **Baseline implemented:** `RandomGenerator` provides reproducible maps from
+   a seed, dimensions, and a deposit-density percentage. Each occupied tile has
+   1–3 deposits containing 1–3 distinct resources with varied quantities and
+   per-resource recovery rates. Every lattice ID is eligible, independently of
+   geographic position; occurrence of every ID on small maps is not guaranteed.
+   Extraction properties are shared by the resources in each deposit. See the
+   workspace README for the baseline ranges and parameter-reporting example.
 
-   Deposit generation must also guarantee a viable starting world rather than a
-   formally valid but economically unreachable one. Seeds, reproducibility, and
-   parameter reporting are necessary so experiments can distinguish economic
-   effects from accidental world-generation artifacts.
+   The first spawn tile always has starting material requiring no gear. Full
+   economic reachability still depends on extraction, access, transport, and
+   technological feasibility. Geographic clustering and abundance calibration
+   remain open; recovery rates are metadata until recovery rules are implemented.
 
 4. **Design extraction and access to deposits.** — **Previously identified, expanded**
 

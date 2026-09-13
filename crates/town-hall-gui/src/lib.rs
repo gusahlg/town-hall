@@ -338,12 +338,17 @@ mod native {
         for y in 0..world.height() {
             for x in 0..world.width() {
                 if let Some(tile) = world.tile(town_hall::Position::new(x, y)) {
-                    resources.extend(tile.deposits().iter().map(|deposit| ResourceSnapshot {
-                        x,
-                        y,
-                        resource: deposit.resource.index(),
-                        quantity: deposit.quantity,
-                    }));
+                    resources.extend(
+                        tile.deposits()
+                            .iter()
+                            .flat_map(|deposit| &deposit.resources)
+                            .map(|info| ResourceSnapshot {
+                                x,
+                                y,
+                                resource: info.resource_id.index(),
+                                quantity: info.quantity,
+                            }),
+                    );
                 }
             }
         }
@@ -368,6 +373,61 @@ mod native {
             error,
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use town_hall::{
+            DepositProperties, Position, ResourceDeposit, ResourceId, ResourceInfo, World,
+        };
+
+        #[test]
+        fn snapshot_includes_every_resource_in_mixed_deposits() {
+            let mut village = Village::with_population(0, 42);
+            *village.world_mut() = World::empty(2, 1);
+            let deposit = ResourceDeposit {
+                resources: [(7, 11), (203, 17)]
+                    .into_iter()
+                    .map(|(id, quantity)| ResourceInfo {
+                        resource_id: ResourceId(id),
+                        quantity,
+                        recovery_rate: 0,
+                    })
+                    .collect(),
+                properties: DepositProperties {
+                    time: 1,
+                    parallelisation: 1,
+                    gear: 0,
+                    efficiency: 100,
+                    batch_size: 1,
+                },
+            };
+            for x in 0..2 {
+                village
+                    .world_mut()
+                    .tile_mut(Position::new(x, 0))
+                    .unwrap()
+                    .deposits_mut()
+                    .push(deposit.clone());
+            }
+            let snapshot = snapshot(&village, "CPU".into(), None);
+            let actual: Vec<_> = snapshot
+                .resources
+                .iter()
+                .map(|info| (info.x, info.y, info.resource, info.quantity))
+                .collect();
+            assert_eq!(
+                actual,
+                [
+                    (0, 0, 7, 11),
+                    (0, 0, 203, 17),
+                    (1, 0, 7, 11),
+                    (1, 0, 203, 17)
+                ]
+            );
+            assert_eq!(snapshot.total_material, 56);
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -387,9 +447,8 @@ impl DemoSimulation {
         simulation
     }
 
-    /// Mirrors the native model's start: every person owns the same money, no
-    /// goods or deposits exist yet, and people fill the world's tiles in spawn
-    /// order.
+    /// Mirrors the native population's starting money, empty inventories, and
+    /// spawn order. The browser preview does not run the native world generator.
     fn reset(&mut self, population: u32) {
         let tile_count = DEFAULT_WORLD_WIDTH * DEFAULT_WORLD_HEIGHT;
         self.snapshot = SimulationSnapshot {

@@ -1,4 +1,10 @@
-use crate::{Quantity, ResourceId};
+mod deposits;
+pub use deposits::*;
+
+mod generate;
+pub use generate::{Generator, RandomGenerator};
+
+use crate::DEFAULT_RANDOM_SEED;
 
 pub const DEFAULT_WORLD_WIDTH: u32 = 150;
 pub const DEFAULT_WORLD_HEIGHT: u32 = 150;
@@ -15,23 +21,7 @@ impl Position {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResourceDeposit {
-    pub resources: Vec<ResourceInfo>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResourceInfo {
-    resource_id: ResourceId,
-    quantity: Quantity,
-    recovery_rate: u16,
-    properties: DepositProperties,
-}
-pub struct DepositProperties {
-
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Tile {
     deposits: Vec<ResourceDeposit>,
 }
@@ -48,7 +38,7 @@ impl Tile {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct World {
     width: u32,
     height: u32,
@@ -56,7 +46,17 @@ pub struct World {
 }
 
 impl World {
+    /// Generate a world with the default seed and deposit distribution.
     pub fn new(width: u32, height: u32) -> Self {
+        Self::with_seed(width, height, DEFAULT_RANDOM_SEED)
+    }
+
+    pub fn with_seed(width: u32, height: u32, seed: u64) -> Self {
+        RandomGenerator::new(seed).generate(width, height)
+    }
+
+    /// A blank grid for hand-built scenarios and alternative generators.
+    pub fn empty(width: u32, height: u32) -> Self {
         assert!(width > 0 && height > 0, "world dimensions must be positive");
         let tile_count = usize::try_from(width)
             .ok()
@@ -100,7 +100,8 @@ impl World {
         self.tiles
             .iter()
             .flat_map(|tile| tile.deposits())
-            .map(|deposit| deposit.quantity as u128)
+            .flat_map(|deposit| deposit.resources.iter())
+            .map(|resource| resource.quantity as u128)
             .sum()
     }
 

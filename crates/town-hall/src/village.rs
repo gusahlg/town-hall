@@ -8,11 +8,12 @@ use rayon::prelude::*;
 
 use crate::{
     ACTION_INPUT_COUNT, ACTION_LAYER_SIZES, ACTION_OUTPUT_COUNT, Action, BASE_INPUT_COUNT,
-    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED, DIMENSIONS,
-    Economy, Entity, EntityId, EntityKind, GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START,
-    INITIAL_ENTITY_MONEY, Inventory, KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool,
-    MONOMIAL_FEATURE_COUNT, Need, NeedComponent, PREDICT_OUTPUT_START, Position, PropertyPoint,
-    ReaderKind, ReaderPool, STARTING_POPULATION, World, give_output, predict_output,
+    CONNECTION_BUNDLE_SIZE, CONSERVE_OUTPUT, ConnectionBundle, DEFAULT_RANDOM_SEED,
+    DEFAULT_WORLD_HEIGHT, DEFAULT_WORLD_WIDTH, DIMENSIONS, Economy, Entity, EntityId, EntityKind,
+    GET_TO_KNOW_LAYER_SIZES, GIVE_OUTPUT_START, INITIAL_ENTITY_MONEY, Inventory,
+    KNOWN_PERSON_COUNT, KNOWN_PERSON_MASK_WORDS, KnownPeoplePool, MONOMIAL_FEATURE_COUNT, Need,
+    NeedComponent, PREDICT_OUTPUT_START, Position, PropertyPoint, ReaderKind, ReaderPool,
+    STARTING_POPULATION, World, give_output, predict_output,
 };
 
 const BASELINE_NEED_RECOVERY_RATE: f32 = 0.05;
@@ -80,7 +81,7 @@ impl Village {
         let mut random = Random::new(seed);
         let action_brains = DenseNetworkPool::with_capacity(action_shape, population);
         let readers = ReaderPool::monomial_with_capacity(&action_brains, population, &mut random);
-        let world = World::default();
+        let world = World::with_seed(DEFAULT_WORLD_WIDTH, DEFAULT_WORLD_HEIGHT, seed);
         let mut village = Self {
             population: Vec::with_capacity(population),
             entity_indices: HashMap::with_capacity(population),
@@ -173,8 +174,8 @@ impl Village {
     /// With no satisfaction, this baseline becomes fatal after roughly 1,000
     /// state updates.
     fn baseline_person_needs(&self) -> Vec<Need> {
-        let ideal = PropertyPoint::new([0.5; DIMENSIONS])
-            .expect("the baseline ideal point is finite");
+        let ideal =
+            PropertyPoint::new([0.5; DIMENSIONS]).expect("the baseline ideal point is finite");
         vec![
             Need::new(
                 vec![NeedComponent { ideal, quantity: 1 }],
@@ -784,6 +785,31 @@ mod tests {
             self.population_sizes.push(pool.len());
             pool.forward_cpu(inputs)
         }
+    }
+
+    #[test]
+    fn world_generation_uses_the_session_seed_independently_of_population() {
+        let empty = Village::with_population(0, 42);
+        let populated = Village::with_population(2, 42);
+        assert_eq!(empty.world(), populated.world());
+        assert_ne!(empty.world(), Village::with_population(0, 43).world());
+        assert!(populated.world().total_deposited_material() > 0);
+        assert!(
+            populated
+                .entities()
+                .iter()
+                .all(|entity| entity.inventory().total_units() == 0)
+        );
+        let first = &populated.entities()[0];
+        assert!(
+            populated
+                .world()
+                .tile(first.location())
+                .unwrap()
+                .deposits()
+                .iter()
+                .any(|deposit| deposit.properties.gear == 0)
+        );
     }
 
     #[test]

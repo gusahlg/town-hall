@@ -179,6 +179,7 @@ impl Village {
         vec![
             Need::new(
                 vec![NeedComponent { ideal, quantity: 1 }],
+                [3, 200, 100, 34, 1, 80, 43, 65],
                 0.0,
                 BASELINE_NEED_RECOVERY_RATE,
             )
@@ -775,6 +776,19 @@ mod tests {
     use super::*;
     use neuro_ash::CpuEvaluator;
 
+    fn single_component_need(focuses: [u8; 8], intensity: f32, recovery_rate: f32) -> Need {
+        Need::new(
+            vec![NeedComponent {
+                ideal: PropertyPoint::new([0.5; DIMENSIONS]).unwrap(),
+                quantity: 1,
+            }],
+            focuses,
+            intensity,
+            recovery_rate,
+        )
+        .unwrap()
+    }
+
     #[derive(Default)]
     struct RecordingEvaluator {
         population_sizes: Vec<usize>,
@@ -828,7 +842,7 @@ mod tests {
         let mut village = Village::with_population(1, 1);
         let entity = &mut village.population[0];
         assert_eq!(entity.needs().len(), 1);
-        assert!(!entity.needs()[0].target.is_empty());
+        assert!(!entity.needs()[0].target().is_empty());
 
         for _ in 0..5_000 {
             entity.update_state();
@@ -845,7 +859,7 @@ mod tests {
             Inventory::default(),
             INITIAL_ENTITY_MONEY,
             village.next_spawn_position(),
-            vec![Need::new(Vec::new(), 0.95, 0.1).unwrap()],
+            vec![single_component_need([0; DIMENSIONS], 0.95, 0.1)],
         );
         let mut evaluator = RecordingEvaluator::default();
 
@@ -871,7 +885,7 @@ mod tests {
             Inventory::default(),
             INITIAL_ENTITY_MONEY,
             village.next_spawn_position(),
-            vec![Need::new(Vec::new(), 0.2, 0.1).unwrap()],
+            vec![single_component_need([0; DIMENSIONS], 0.2, 0.1)],
         );
 
         village.step(&mut CpuEvaluator).unwrap();

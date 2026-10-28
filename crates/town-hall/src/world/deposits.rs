@@ -13,6 +13,8 @@ pub struct ResourceInfo {
     pub resource_id: ResourceId,
     /// Available primitive units, not inventory goods or a good configuration.
     pub quantity: Quantity,
+    // NOTE: Later on we should remove the recovery_rate and replace it with a system that
+    // organically regenerates and creates new deposits all over the world.
     /// Nominal primitive units recovered per tick; zero marks finite material.
     /// Recovery is metadata until the extraction/recovery rules are implemented.
     pub recovery_rate: u16,

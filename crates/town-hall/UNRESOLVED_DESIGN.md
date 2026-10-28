@@ -1,772 +1,683 @@
-# Town Hall — unresolved design issues
-
-This document collects the unresolved questions raised in the Town Hall design
-discussion and the additional boundaries exposed while implementing the current
-economic scaffold.
-
-The categories are implementation priorities, not judgments about how
-interesting a feature is:
-
-- **Absolutely essential** means that a functioning version of the intended
-  generative economy needs an explicit answer, even if the first answer is very
-  simple.
-- **High potential** means that the core simulation can run without the feature,
-  but it could materially change the kinds of economies that emerge.
-- **Nice to have** means that the feature may add texture, realism, usability, or
-  efficiency, but is unlikely to prove the central premise by itself.
-
-Items marked **Previously identified** come directly from the design
-specifications. Items marked **Newly identified** arose from reviewing and
-implementing the scaffold. A mixed label means the original question exposed an
-additional implementation boundary.
-
-Nothing here reopens the settled ontology: primitive resources remain fixed
-identities in a property space; goods remain exact ordered configurations with
-stable IDs; need targets remain ideal configurations independent of `GoodId`;
-recipes remain unordered net-input multisets for an exact output; processes
-remain practical implementations of recipes; and the neural/social architecture
-remains core design even though its present economic action choices are
-temporary. All physical, component, inventory, recipe, and need-target quantities
-use one universal indivisible unit represented by `u32`. Each primitive resource
-has a canonical one-unit configuration `[(A, 1)]`. Inventory multiplicity never
-changes configuration identity: `50 × [(A, 1)]` and `1 × [(A, 50)]` are distinct
-goods even though conservation accounting finds the same primitive material in
-both. Combining, splitting, or rearranging them requires a recipe and a feasible
-process.
-
-## Absolutely essential
-
-1. **Define valid configuration boundaries.** — **Previously identified, separated**
-
-   A `u32` permanently settles the numeric representation and makes negative and
-   fractional quantities impossible, but zero is still representable. The model
-   must decide whether a component such as `(A, 0)` is rejected and whether an
-   empty ordered configuration is a valid `Good`. The likely rule remains that
-   every component quantity is positive and every good contains at least one
-   component, because zero-sized structure complicates canonical identity without
-   representing physical matter.
-
-   Need targets require the same explicit boundary decision. Whatever rule is
-   chosen should be enforced when configurations enter their canonical registries
-   so invalid variants cannot receive permanent IDs. Repeated positive components
-   remain valid and structurally significant under the settled sequence model.
-
-2. **Define recipe yield and process batching.** — **Previously identified**
-
-   The scaffold currently uses the cautious convention that one recipe
-   execution produces one unit of its output good. This needs to be confirmed or
-   replaced. If explicit yields or batch sizes are allowed, the model must say
-   which requirements scale linearly, which are fixed per batch, whether partial
-   batches are legal, and how duration and equipment occupancy scale.
-
-   Batch semantics affect conservation, capacity, profitability, and innovation.
-   They also determine whether two otherwise identical transformations with
-   different efficient batch sizes are different recipes or different processes.
-   A minimal one-output-unit convention is sufficient initially, but it must be
-   treated consistently everywhere.
-
-3. **Generate the primitive physical world.** — **Previously identified, expanded**
-
-   **Baseline implemented:** `RandomGenerator` provides reproducible maps from
-   a seed, dimensions, and a deposit-density percentage. Each occupied tile has
-   1–3 deposits containing 1–3 distinct resources with varied quantities and
-   per-resource recovery rates. Every lattice ID is eligible, independently of
-   geographic position; occurrence of every ID on small maps is not guaranteed.
-   Extraction properties are shared by the resources in each deposit. See the
-   workspace README for the baseline ranges and parameter-reporting example.
-
-   The first spawn tile always has starting material requiring no gear. Full
-   economic reachability still depends on extraction, access, transport, and
-   technological feasibility. Geographic clustering and abundance calibration
-   remain open; recovery rates are metadata until recovery rules are implemented.
-
-4. **Design extraction and access to deposits.** — **Previously identified, expanded**
-
-   Extraction is the bridge from unowned world deposits to owned raw goods. A
-   minimal model must decide whether deposits deplete, whether extraction has a
-   flow limit, and what labor, time, equipment, consumables, and efficiency are
-   required. Treating extraction as a specialized process is conceptually clean,
-   but it still needs rules for selecting a tile and reducing its deposit.
-
-   A newly exposed boundary is access: who is allowed to extract a deposit? The
-   answer could initially be “any entity present on the tile,” but ownership,
-   congestion, simultaneous claims, and reservation rules cannot remain
-   implicit. Without an extraction rule, manufactured production can never be
-   bootstrapped from the physical world.
-
-5. **Specify the exact configuration-distance algorithm.** — **Previously identified**
-
-   This is the central mathematical subsystem. It must compare an ordered need
-   target of ideal property points with an ordered good configuration of actual
-   resources while accounting for resource distance, quantity distance,
-   insertions, deletions, different lengths, and reordering. The design still
-   needs to settle symmetry versus directional suitability, penalties for extra
-   and missing components, the effect of excess quantity, whether swapping is a
-   primitive operation, and the relative weights of structural and material
-   differences.
-
-   The result must be normalized enough to compare targets of different sizes
-   and cheap enough to evaluate frequently. An intuitively attractive edit
-   distance can still create pathological incentives—for example, padding goods
-   with cheap components or exploiting normalization—so adversarial examples and
-   small visual experiments should guide the formula.
-
-6. **Convert distance into similarity and satisfaction.** — **Previously identified**
-
-   A distance alone does not determine utility. The model needs a bounded
-   falloff from distance to similarity, followed by a satisfaction rule that
-   combines similarity, inventory amount consumed, quantities inside one good,
-   and current need intensity. It must avoid double-counting physical amount: a
-   large configuration consumed once and many small units should have explicitly
-   chosen—not accidental—relationships.
-
-   Saturation also needs definition. Satisfaction should not normally reduce an
-   intensity below its minimum, and consuming twice as much should not always
-   yield twice as much value when the need is almost satisfied. The initial rule
-   that one good may independently satisfy every matching need remains settled,
-   but its quantitative consequences must be measured.
-
-7. **Define need recovery and the simulation time unit.** — **Previously identified, expanded**
-
-   Need recovery is conceptually nonlinear and bounded, but its exact update rule
-   and units are unresolved. Recovery rates are meaningless until a tick has a
-   temporal interpretation shared with process duration, employment, transport,
-   and equipment occupancy. The model must decide whether recovery is continuous
-   but integrated per tick, event-based, or a direct discrete recurrence.
-
-   The first implementation can use a simple stable recurrence such as movement
-   toward a maximum. It should nevertheless behave consistently under a changed
-   tick size and avoid producing demand primarily as a numerical artifact.
-
-8. **Generate needs that create coherent but heterogeneous demand.** — **Previously identified**
-
-   Every person needs target configurations, but fully independent targets in a
-   vast configuration space may leave almost no shared demand and therefore no
-   viable mass markets. Conversely, identical targets would remove much of the
-   intended product differentiation. A baseline generator must choose the number
-   and lengths of needs, ideal property points, target quantities, initial
-   intensities, and recovery rates.
-
-   Some controlled clustering is likely necessary even if cultural and social
-   preference formation are deferred. The generated distribution should be
-   inspectable so product success can be traced to understandable demand rather
-   than opaque randomness.
-
-9. **Give needs an economic value scale.** — **Previously identified**
-
-    Similarity and intensity are dimensionless, whereas price is denominated in
-    money. The simulation needs a bridge such as maximum willingness to pay,
-    need importance, or a utility scale per person. Otherwise an intensity of
-    `1.0` cannot say whether the person would spend one monetary unit or their
-    entire wealth.
-
-    The minimal model may assign the same value scale to every need, but that is
-    still an explicit calibration choice. It must also decide whether the value
-    of another unit declines as satisfaction accumulates and how the opportunity
-    cost of holding money enters the comparison.
-
-10. **Define consumer choice across goods, needs, and time.** — **Previously identified**
-
-    Consumer surplus is a promising principle, but an operational purchasing
-    policy is still absent. A person may face several goods that partially
-    satisfy overlapping needs, limited money, inventory already owned, future
-    recovery, and uncertainty about later prices. Choosing each purchase in
-    isolation can yield a poor bundle or spend the budget repeatedly.
-
-    The first policy needs rules for affordability, quantity selection,
-    substitution, tie-breaking, and whether consumption happens immediately or
-    is planned separately. It should permit a cheap imperfect substitute to beat
-    an expensive close match without requiring globally optimal combinatorial
-    planning.
-
-11. **Define the disposable consumption lifecycle.** — **Previously identified, expanded**
-
-    Purchase and consumption are correctly separate, but the latter still lacks
-    an execution rule. The model must decide when an entity chooses to consume,
-    how inventory is decremented, whether partial units can be used, whether the
-    material disappears from active state, and how consumption interacts with
-    multiple needs. A minimal disposable-good path is necessary even if durable
-    ownership is postponed.
-
-    Storage for later use, resale, recipe use, and equipment use must remain
-    valid alternatives. Merely buying a good must never silently satisfy a need
-    or destroy the object.
-
-12. **Create a technological-feasibility model.** — **Previously identified**
-
-    Material conservation prevents free matter but does not prevent arbitrary
-    rearrangement or a process with zero labor, zero time, no equipment, and
-    perfect efficiency. The simulation needs a deeper landscape determining
-    which recipes and processes can exist and how trade-offs constrain them.
-
-    This system must support mutation without becoming a handcrafted catalogue
-    of industries. It may use latent technological properties, transformation
-    costs, capability requirements, bounded improvement frontiers, or another
-    generative rule. Whatever the mechanism, it must distinguish accounting
-    possibility from practical manufacturability and prevent innovation from
-    monotonically mutating every cost to zero.
-
-13. **Finish process material accounting.** — **Previously identified**
-
-    The conceptual distinction between embodied recipe inputs, necessary process
-    consumables, and extra inputs lost through inefficiency is settled and is
-    represented in the scaffold. Their physical destinations are not. The model
-    must decide whether consumed fuel and losses disappear, become one or more
-    waste goods, or are tracked as primitive-material residue.
-
-    Validation must state which conservation equation applies to a complete
-    process execution. It must also prevent the same input unit from being
-    counted as both embodied material and an additional consumable. This is
-    necessary before costs or inventory changes produced by a process can be
-    trusted.
-
-14. **Schedule production and reserve its requirements.** — **Previously identified, expanded**
-
-    A process has workers, duration, equipment, and consumed goods, but there is
-    no runtime production job. Starting a job must atomically reserve or remove
-    the relevant inputs, occupy its workers and equipment, record its location
-    and completion time, and eventually place output there. Cancellation and
-    entity removal during a job also need safe behavior.
-
-    The unresolved equipment-concurrency question is part of this boundary. One
-    equipment unit should not normally support unlimited simultaneous jobs.
-    Without reservations, several decisions made from the same snapshot can
-    spend the same inventory or labor multiple times.
-
-15. **Specify production locality.** — **Previously identified**
-
-    The intended interpretation is that inputs, workers, and equipment coexist
-    at a production location for the process duration and output appears at that
-    location. Exact rules are still needed for entity presence, inventories
-    stored at a tile versus carried by an owner, movable equipment, and jobs
-    spanning entity movement.
-
-    A minimal rule can assign every owned physical good to its owner's current
-    tile, but that assumption has consequences for companies, warehouses, and
-    transport. Location must have one authoritative representation to avoid
-    goods or people being present in several places at once.
-
-16. **Build a minimal labor allocation and wage loop.** — **Previously identified**
-
-    Processes require people, yet workers cannot currently offer time, choose
-    work, be hired, or receive wages. At minimum, the model must decide who may
-    provide labor, how much labor time each person has, how producers acquire it,
-    and how compensation is determined and transferred. Self-production may be
-    enough for the earliest version, but then its opportunity cost still needs
-    representation.
-
-    This loop is economically central because labor income supplies consumer
-    purchasing power while production competes for scarce time. It must not
-    assume elaborate firms, but it cannot leave workers as a free process input.
-
-17. **Choose the minimal producer/organization model.** — **Previously identified**
-
-    The generic `Entity` can represent people and organizations, but their
-    behavioral distinction is unresolved. A first economy needs to say whether
-    people can own and run production directly, whether companies are required,
-    which kinds of entity can have needs or supply labor, and who owns output and
-    pays costs.
-
-    The most cautious route may be person-producers first and explicit companies
-    later. Even that choice should be stated so ownership, profit, labor, and
-    consumption do not acquire inconsistent assumptions in different systems.
-
-18. **Implement a baseline market and price-discovery mechanism.** — **Previously identified**
-
-    Supply and demand are conceptual outcomes, not an executable market. The
-    model must choose a minimal mechanism—such as local posted offers, an order
-    book, or a periodic auction—through which a buyer discovers a quantity and
-    price, money changes hands, and ownership transfers. It needs rules for
-    partial fills, price and quantity priority, insufficient funds or inventory,
-    and deterministic settlement.
-
-    The market must trade `GoodId` quantities rather than embedded objects and
-    must distinguish merely listing a good from transporting or consuming it.
-    The baseline need not be realistic in every detail, but prices cannot emerge
-    until some concrete protocol exists.
-
-19. **Define market locality and minimally available information.** — **Previously identified**
-
-    Global technological knowledge does not imply perfect market information or
-    access. Consumers need some way to learn that a good is available, where it
-    is, its configuration, price, and quantity. Producers need some limited
-    signal—historical sales, posted prices, failed orders, or aggregate local
-    demand—from which to estimate opportunity without reading private need
-    targets.
-
-    A minimal information boundary must avoid both extremes: omniscient producers
-    who can calculate every person's exact willingness to pay and blind producers
-    who can only invent at random. It should also specify whether distant prices
-    are visible before transport and whether information itself has delay.
-
-20. **Implement transportation as a real boundary between locations.** — **Previously identified**
-
-    Geography cannot create trade or specialization if goods can move instantly
-    and freely. The initial system needs at least a cost, a duration, a capacity
-    rule, and an ownership-safe transfer from one location to another. It must
-    specify who initiates and pays for movement and whether goods are unavailable
-    while in transit.
-
-    Transportation can initially be a simple formula rather than a full
-    productive industry. Even so, distance and physical quantity must affect it,
-    and transaction settlement must not teleport goods between local markets.
-
-21. **Design innovation search and the invention lifecycle.** — **Previously identified**
-
-    Product, recipe, and process innovation are conceptually distinct, but no
-    actor yet generates or evaluates candidates. The model needs mutation
-    operators, search effort or cost, candidate-selection rules, and a way to
-    estimate profitability under imperfect information. Search must be capable
-    of discovering cheap imperfect substitutes rather than merely optimizing
-    geometric quality.
-
-    The lifecycle also needs a decision about whether a `Good` design can be
-    registered without a recipe, whether a recipe can exist without a feasible
-    process, and when globally known technology becomes actually producible.
-    Permanent IDs make speculative registration potentially expensive, so the
-    boundary between a candidate and a registered discovery matters.
-
-22. **Resolve cyclic input and equipment dependencies.** — **Previously identified**
-
-    Recipe and equipment graphs can contain cycles such as A consuming B while B
-    consumes A, or two goods requiring each other as equipment. Conservation
-    prevents matter creation but does not determine whether a network can be
-    bootstrapped. The model must either forbid cycles, permit them only with
-    pre-existing inventory, or analyze reachability from deposits and existing
-    equipment.
-
-    The policy must consider both consumed inputs and non-consumed equipment.
-    Otherwise a process may appear valid yet be impossible to start in the
-    generated world.
-
-23. **Bootstrap a viable economy at tick zero.** — **Previously identified**
-
-    Starting entities, money, deposits, inventories, raw goods, recipes,
-    processes, equipment, organizations, and knowledge have not been selected.
-    An entirely blank technological state may never discover extraction; an
-    overly rich seed economy may predetermine the industrial structure the model
-    is supposed to generate.
-
-    The bootstrap should provide the smallest reachable basis from which the
-    intended search can expand. It also needs to decide initial need states and
-    how people survive or act before the first market clears. Multiple named
-    initialization presets may ultimately be useful, but one coherent baseline
-    is essential first.
-
-24. **Close the monetary and ownership accounting loop.** — **Previously identified, expanded**
-
-    Money exists, but its initial distribution, issuance, sinks, and sources are
-    unresolved. Wages, purchases, producer revenue, and investment must transfer
-    existing balances atomically unless an explicit monetary institution creates
-    or destroys money. Inventory ownership needs the same discipline, including
-    what happens when an entity dies or an organization fails.
-
-    The temporary `Give` action conserves money except at integer saturation, but
-    it is not an economic system. A ledger-level invariant and clear failure
-    behavior are required before price or wealth results are meaningful.
-
-25. **Replace the temporary economic action vocabulary and observations.** — **Previously identified, expanded**
-
-    The neural/social architecture is settled, but `Conserve`, `Predict`, and
-    `Give` are explicitly not. A complete economic decision model must decide
-    what actions entities can take—buy, sell, consume, work, produce, invent,
-    transport, wait, or combinations—and how quantities, targets, goods, prices,
-    and locations are parameterized without exploding the output space.
-
-    The observation side is equally important. Current inputs containing own
-    money, total inventory units, total world deposits, and known-person money
-    are placeholders. Economic state must be encoded while preserving the fixed
-    social-reading and connection machinery. This is the main integration point
-    between the settled neural model and the new economy.
-
-26. **Define tick ordering, atomicity, and conflicting decisions.** — **Newly identified**
-
-    Once markets, jobs, movement, consumption, and need recovery exist, their
-    order within a synchronous tick can change outcomes. The simulation needs a
-    phase model or event scheduler specifying what is observed, what is reserved,
-    when prices clear, when jobs complete, when needs recover, and when entities
-    may die or be removed.
-
-    Decisions should normally be made from a stable snapshot and resolved without
-    iteration-order advantage. Conflicts for the same good, worker, equipment, or
-    deposit need deterministic arbitration. This extends the atomic design already
-    used by the neural/social tick into the economic state.
-
-27. **Control combinatorial growth without destroying emergence.** — **Previously identified, expanded**
-
-    The space of ordered goods, alternative recipes, processes, and consumer
-    comparisons is enormous. Permanent `GoodId`s mean failed inventions can
-    accumulate forever, while evaluating every known good against every need or
-    every possible mutation is infeasible. The implementation needs candidate
-    indexes, caching, locality-sensitive search, bounded exploration, or another
-    strategy that keeps runtime and memory finite.
-
-    Limits must be economic or computational policies rather than hidden semantic
-    categories. They should not accidentally forbid long supply chains, niche
-    products, or nearby substitutes—the phenomena the model is meant to reveal.
-
-28. **Define validation experiments and calibration criteria.** — **Previously identified, expanded**
-
-    “Reasonable” emergence needs measurable tests. The initial experiments should
-    examine smooth substitution, quality-versus-price trade-offs, coherent shared
-    demand, material conservation, trade under spatial scarcity, useful
-    intermediates, capital goods, recipe competition, process improvements, and
-    resistance to giant or otherwise exploitative configurations.
-
-    The simulator also needs diagnostics exposing why a consumer bought a good
-    and why a producer expected profit. Without these, tuning the distance,
-    utility, and search systems risks fitting intuition by guesswork or mistaking
-    implementation bugs for emergent economics.
-
-## High potential, but not strictly necessary
-
-1. **Context-dependent resource-property weighting.** — **Previously identified**
-
-   A universal resource distance is sufficient for a first model, but it makes
-   two materials equally substitutable in every application. Need-specific
-   weights could make dimensions important in different proportions for
-   different desires, while process-specific weights could eventually influence
-   technological compatibility. This would create materials that are close
-   substitutes for one purpose and poor substitutes for another.
-
-   The major risk is adding opaque parameters and computation before the base
-   metric is understood. Context weights should therefore arrive only after a
-   universal metric has been visualized and validated.
-
-2. **Need-specific width or tolerance.** — **Previously identified**
-
-   Giving every need the same falloff assumes identical specificity. A width
-   parameter could distinguish broad desires accepting many configurations from
-   narrow desires requiring an unusually close match. This could produce mass
-   commodity markets alongside specialized niches even when intensities are
-   similar.
-
-   Width must not become a second arbitrary importance scale. Its role should be
-   limited to geometry, with economic importance handled separately.
-
-3. **Richer cultural, geographical, and social preference structure.** — **Previously identified**
-
-   A minimal clustered need generator can create coherent demand, but culture
-   and geography could make tastes correlate within communities and diverge
-   between them. Social interaction could also diffuse or differentiate targets
-   over time. This would support regional products, fashion, cultural trade, and
-   changing market boundaries.
-
-   Such dynamics have high emergent potential, but fixed generated clusters are
-   enough to test the physical and market model first.
-
-4. **Durable consumer goods and service flows.** — **Previously identified**
-
-   The disposable consumption rule cannot represent houses, furniture, or
-   personal tools well. Durable goods could remain owned and provide recurring
-   satisfaction while available, perhaps with occupancy, capacity, maintenance,
-   or eventual degradation. This would create saving, replacement cycles, rental
-   opportunities, and household capital.
-
-   It is not required for the first recurring-consumption economy, but excluding
-   it permanently would bias nearly all successful consumer goods toward
-   disposable analogues.
-
-5. **Heterogeneous need importance and marginal utility of wealth.** — **Previously identified**
-
-   A common willingness-to-pay scale can bootstrap consumer choice. Later,
-   person- and need-specific importance would distinguish urgent desires from
-   minor preferences, while a wealth-dependent marginal value of money would
-   make the same price affect rich and poor people differently. This could
-   generate premium markets, budget goods, and distribution-sensitive demand
-   more naturally.
-
-   Care is needed to avoid encoding desired economic outcomes directly through
-   arbitrary utility coefficients.
-
-6. **Consequences of unmet needs and harmful goods.** — **Previously identified**
-
-   Current needs motivate demand but do not represent biological necessity, and
-   similarity is nonnegative. Some needs could eventually affect health,
-   productivity, happiness, or survival when left unmet; some configurations
-   could actively produce negative utility rather than merely zero satisfaction.
-   These rules could connect consumer markets to population and labor dynamics.
-
-   They are not necessary to demonstrate generative products and could create
-   brittle death spirals if introduced before supply and purchasing are stable.
-
-7. **A satisfaction budget for multifunctional goods.** — **Previously identified**
-
-   Initially, one consumed good independently satisfies every matching need.
-   This intentionally permits multifunctional products, but it may multiply a
-   good's value without bound when a person has many nearby needs. A later model
-   could allocate a fixed amount of satisfaction among needs, introduce shared
-   capacity, or let the consumer choose how the good is used.
-
-   This should be driven by observed exploits rather than changed preemptively,
-   because independent satisfaction is simpler and already the chosen initial
-   behavior.
-
-8. **Multiple outputs, byproducts, physical waste, and recycling.** — **Previously identified**
-
-   A single primary output with disappearing losses is sufficient initially, but
-   useful byproducts can create important cross-industry relationships. A process
-   could emit several explicit goods, or waste could itself be a physical good
-   that later recipes recover. Recycling and disassembly would then require real
-   recipes and feasible processes rather than automatic access to flattened
-   material.
-
-   This could produce industrial symbiosis and secondary-resource markets, but it
-   significantly complicates profitability allocation and production accounting.
-
-9. **Renewable resources and ecological dynamics.** — **Previously identified**
-
-   The essential extraction model can begin with fixed depleting deposits.
-   Regeneration, renewable flows, seasonal variation, and resource damage could
-   later create sustainable extraction strategies and long-run scarcity. An
-   explicit environment could also receive process waste or other externalities.
-
-   These systems have major long-horizon potential, but they should not obscure
-   whether the basic production and trade loops work.
-
-10. **Transportation as an endogenous industry.** — **Previously identified**
-
-    After a simple movement cost proves geography meaningful, transportation
-    could itself require labor, time, vehicles, consumables, route capacity, and
-    infrastructure. Vehicles would then emerge as equipment goods and transport
-    firms could specialize like any other producer. Infrastructure investment
-    could reshape comparative advantage and regional clustering.
-
-    This is much richer than a distance multiplier, but the simple boundary is
-    enough to establish trade first.
-
-11. **Equipment degradation, maintenance, and replacement.** — **Previously identified**
-
-    Infinite-lived equipment creates capital goods and capacity but omits a major
-    source of recurring industrial demand. Wear could depend on use or time,
-    maintenance could consume goods and labor, and failed equipment could become
-    waste or material for disassembly. Different processes might trade higher
-    capital wear for speed or labor savings.
-
-    This feature is economically powerful but can wait until equipment occupancy
-    and production scheduling are correct.
-
-12. **Worker skills and human-capital differences.** — **Previously identified**
-
-    Counting workers treats all labor as interchangeable. Skills, learning, and
-    process-specific productivity could generate wage differences,
-    specialization, training, migration, and technological bottlenecks. A process
-    might require a capability distribution rather than merely a head count.
-
-    Generic labor is a valid first abstraction; skills should be introduced only
-    if the labor market behaves sensibly without them.
-
-13. **Explicit firms and organizational behavior.** — **Previously identified**
-
-    Person-producers can close the minimal economic loop, but companies could own
-    inventory and equipment, hire people, retain profit, invest, enter, fail, and
-    coordinate multi-stage production. Their objective functions and governance
-    need not mirror human needs. Organizations could also represent cooperatives
-    or public institutions using the same generic entity substrate.
-
-    This greatly expands industrial structure, yet it is safer to add after
-    individual production, labor, and ownership are unambiguous.
-
-14. **Decentralized technological knowledge.** — **Previously identified**
-
-    Global knowledge is the settled initial rule. Later, entity-local knowledge
-    of goods, recipes, and processes could enable discovery diffusion, imitation,
-    secrecy, trade secrets, research specialization, and regional technological
-    divergence. Knowledge acquisition could itself consume time or depend on
-    social connections.
-
-    It has high potential, but global knowledge removes a major confounder while
-    the feasibility and innovation systems are being validated.
-
-15. **Production provenance, ethical preferences, brands, and reputation.** — **Previously identified**
-
-    Units sharing a `GoodId` are physically fungible, but batches may eventually
-    carry recipe, process, location, labor, or environmental provenance. Consumers
-    could value that metadata without pretending the physical configuration is a
-    different good. Brands and reputation could summarize expected provenance or
-    seller reliability under imperfect information.
-
-    This supports rich differentiation, but it introduces a second desirability
-    channel that should not mask weaknesses in configuration-based preference.
-
-16. **Credit, investment, insolvency, and capital finance.** — **Previously identified**
-
-    Production requiring expensive equipment may be impossible when actors can
-    spend only current money. Loans, equity, retained earnings, and investment
-    decisions could fund capital-intensive processes and create financial
-    networks. Defaults and liquidation would then affect ownership and production
-    capacity.
-
-    These mechanisms are potentially transformative, but a cash-only economy is
-    sufficient to validate prices, labor, and production first.
-
-17. **Economies of scale, fixed costs, and learning by doing.** — **Newly identified**
-
-    Linear per-unit recipes and processes may produce specialization, but they do
-    not naturally represent setup costs, scale-efficient batches, or accumulated
-    operational experience. Fixed setup requirements and process improvement
-    through repeated use could create firm growth, market concentration, and path
-    dependence without hard-coded industries.
-
-    These should be distinguished from arbitrary producer bonuses and added only
-    after base process costs and batching are stable.
-
-18. **Storage capacity, spoilage, and inventory carrying costs.** — **Previously identified, expanded**
-
-    Goods currently remain in inventory indefinitely and without space or cost.
-    Storage requirements, decay, spoilage, or quality degradation could constrain
-    stockpiling and create warehousing, inventory cycles, and geographic
-    bottlenecks. Physical degradation should normally result in another exact
-    `GoodId`, not hidden quality variation within one ID.
-
-    These effects are valuable for dynamics but unnecessary for the first static
-    physical ownership model.
-
-19. **Land, sites, and deposit rights as economic assets.** — **Newly identified**
-
-    A minimal extraction rule can grant simple access by presence. A richer model
-    could make tiles, extraction rights, factory sites, or transport corridors
-    ownable and tradable outside the physical `Good` system. Rent and location
-    scarcity could then influence industrial clustering independently of raw
-    material prices.
-
-    This has substantial potential but belongs to the broader ownership system,
-    not to `GoodId`.
-
-20. **Population dynamics, inheritance, and organization continuity.** — **Newly identified**
-
-    The broader simulation permits entity survival and death, but a full economy
-    may eventually need births, inheritance of money and goods, company
-    continuity, estate handling, and migration. These affect long-run wealth
-    distributions and preservation of capital or knowledge.
-
-    They are not needed to test the core economic ontology and should follow a
-    reliable ownership and monetary ledger.
-
-## Nice to have or likely marginal initially
-
-1. **Procedural preference seeds as a memory optimization.** — **Previously identified**
-
-   Persistent needs could be regenerated from a compact per-person seed instead
-   of storing every target. This may matter at very large populations, provided
-   generated needs remain deterministic and independent of product identity.
-   Geometry—not hashing—must still determine similarity. It is an implementation
-   optimization and should wait until profiling shows need storage is material.
-
-2. **Archival compression for the permanent good registry.** — **Previously identified**
-
-   Stable `GoodId`s must never be reused, even when a product has no inventory,
-   demand, production, or known recipe. If failed innovation creates millions of
-   entries, cold configurations and historical metadata could be compacted or
-   moved to archival storage while retaining lookup and identity. This is useful
-   only after search-policy controls and real registry growth are measured.
-
-3. **Resource-specific physical measurement units.** — **Previously identified**
-
-   Different real materials are commonly measured by mass, volume, count, or
-   energy. Resource-specific units could add realism, but they would complicate
-   conservation and make target quantities harder to compare. A universal
-   abstract material scale is strongly preferred initially; specialized units
-   should be considered only if a concrete economic phenomenon cannot be
-   represented without them.
-
-4. **More sophisticated market protocols.** — **Previously identified**
-
-   Once one baseline mechanism works, bilateral negotiation, continuous order
-   books, auctions, posted-price competition, contracts, or hybrid local markets
-   could be compared. These alter price dynamics and information demands, but
-   implementing several mechanisms before validating one would add surface area
-   without resolving the core ontology.
-
-5. **Contracts, shares, debt claims, and other nonphysical tradables.** — **Previously identified**
-
-   The design correctly excludes labor, services, land, debt, shares, and legal
-   claims from `Good`. Separate registries could eventually support these assets.
-   They may enrich coordination and finance, but most should follow rather than
-   precede the cash market, ownership ledger, and optional firm system.
-
-6. **Markets for nonphysical services.** — **Previously identified, expanded**
-
-   Labor is essential, but broader services could be sold without becoming
-   physical goods: transport service, research, repair, education, or access to
-   equipment. A general contract or service system would avoid forcing them into
-   resource configurations. Initially, each can be represented by a dedicated
-   action or process relationship if it becomes necessary.
-
-7. **Approximate compatibility for substitute equipment.** — **Previously identified as future**
-
-   Current processes require exact equipment `GoodId`s, and a similar good only
-   works through another process. A later feasibility system could generate
-   families of compatible equipment or parameterize capabilities geometrically.
-   This may reduce process duplication, but automatic similarity must not bypass
-   the settled distinction between consumer similarity and technological
-   feasibility.
-
-8. **Stochastic manufacturing defects and quality variation.** — **Previously identified, expanded**
-
-   A process currently produces exactly its declared output. Random defects could
-   instead produce another registered configuration or waste, preserving the
-   rule that physically inferior units cannot hide under the same `GoodId`.
-   Reliability would then affect expected cost and perhaps equipment choice. This
-   is realistic texture, but deterministic production is much easier to diagnose.
-
-9. **Compact production-history fingerprints.** — **Previously identified**
-
-    Full production trees can become large. If provenance is implemented, batches
-    could carry interned lineage records or compact fingerprints linking back to
-    recipes, processes, and source batches. This is primarily a storage and query
-    concern; it is unnecessary while provenance preferences remain deferred.
-
-10. **Human-readable names and semantic interpretation tools.** — **Previously identified, expanded**
-
-    The simulation must not rely on labels such as wood, chair, or machine, but a
-    user interface could assign descriptive names after observing resource
-    properties, configurations, and network roles. Visualizing nearest resources,
-    need matches, supply chains, and emergent capital goods would make experiments
-    much easier to understand without changing simulation behavior.
-
-11. **Richer geography and terrain.** — **Previously identified as implementation-specific**
-
-    The flat rectangular tile grid is adequate initially. Terrain, non-Euclidean
-    connections, rivers, borders, elevation, or changing routes could alter
-    transport and settlement. These are worthwhile only after simple distance
-    already produces meaningful local prices and specialization.
-
-12. **Multiple currencies and exchange markets.** — **Newly identified**
-
-    A single money type is sufficient to close the economic loop. Regional or
-    issuer-specific currencies could create exchange rates, monetary scarcity,
-    and financial geography, but they introduce major calibration questions with
-    little direct benefit to testing generative goods, recipes, and processes.
-
-13. **Taste evolution, fashion, and habituation.** — **Newly identified**
-
-    Need targets are initially persistent while intensities recover. Targets or
-    tolerances could later drift through experience, social influence, or
-    repeated consumption, producing fashion cycles and endogenous demand change.
-    This may be interesting, but stable tastes provide a much clearer environment
-    for evaluating whether product innovation works at all.
-
-14. **Stochastic shocks, accidents, and disasters.** — **Newly identified**
-
-    Deposit discoveries, process accidents, weather, transport loss, or sudden
-    demand shocks could test resilience and create historical contingency. They
-    should be reproducible from the simulation seed and visible in diagnostics.
-    Such shocks add drama and robustness testing, but should not compensate for
-    weak endogenous dynamics in the base economy.
-
-15. **Serialization, schema migration, and ID-width policy.** — **Newly identified**
-
-    Stable resource, good, recipe, process, and entity identities will eventually
-    need a saved-world format. The current numeric widths impose capacity limits,
-    and future changes to quantity or property representations will require
-    migration. This is important for a long-lived application but can wait while
-    the core schemas are intentionally changing quickly.
-
-16. **Experiment presets and parameter-sweep tooling.** — **Previously identified, expanded**
-
-    Resource dimensions, resource counts, map size, needs per person, recovery,
-    innovation rates, and transport costs are natural experimental parameters.
-    Named presets, batch sweeps, and summary reports would make comparative study
-    easier. The immediate priority is defining the underlying rules and a small
-    diagnostic scenario; polished experiment orchestration can follow.
+# Town Hall — unresolved design issues and research directions
+
+Reviewed against the working tree on 2026-10-18, including the existing edits to
+configuration identity and immutable need targets. This is a design review and
+proposed research agenda. Recommendations below are proposals, not implemented
+behavior or newly settled rules.
+
+Town Hall's strongest possibility is an economy in which people discover both
+**what is useful to make** and **whom it is useful to understand**. Exact physical
+configurations give invention something substantive to change. Private neural
+policies, readers of other policies, and generated social connections give
+coordination an unusual mechanism. The interesting result would be that these
+two systems improve one another: production creates reasons to understand other
+people, and social understanding helps people discover viable production.
+
+The central risk is that the two systems remain impressive but disconnected.
+Random policies moving money do not yet demonstrate adaptation; a registry of
+conserved configurations does not yet demonstrate an economy. The next work
+should establish a small, explainable connection between physical possibility,
+individual benefit, exchange, and adaptation.
+
+## Foundations worth protecting
+
+- **Physical identity and economic usefulness are separate.** A good can exist
+  as a design before anyone wants it, knows how to manufacture it, or owns a
+  unit. Needs refer to ideal configurations independently of `GoodId`. This
+  allows unsuccessful inventions, imperfect substitutes, and changing product
+  success without changing the underlying identities.
+- **Structure survives accounting.** Goods are exact expanded resource
+  sequences, stored as runs. Adjacent identical runs merge; separated runs and
+  order remain significant. `50 × [(A, 1)]` and `1 × [(A, 50)]` have equal
+  primitive material but different physical holdings. Combining, splitting,
+  and rearranging require recipes and feasible processes. This distinction is
+  the foundation for manufacturing to add value.
+- **Recipes and processes answer different questions.** Recipes conserve
+  embodied primitive material; processes specify practical requirements.
+  Several production techniques can compete to make the same product without
+  inventing hidden quality differences within a `GoodId`. Consumer similarity
+  does not automatically authorize a substitute input or piece of equipment.
+- **People have persistent preferences and private interpretations.** Need
+  targets are fixed for an entity's lifetime. Changing intensity, inventories,
+  prices, knowledge, and opportunities can change behavior around those fixed
+  targets. Each person has private networks and an observer-specific reader;
+  shared technological knowledge need not imply shared judgment.
+- **The neural architecture takes representation seriously.** The Monomial
+  reader removes hidden-neuron permutations and positive rescalings, within
+  numerical tolerance. Stable social slots and staged connection installation
+  avoid some arbitrary effects of storage layout and evaluation order. These
+  are valuable foundations for controlled experiments.
+
+Retain the existing contracts: 256 primitive `u8` resource identities with
+coordinates derived from a property lattice; universal indivisible `u32`
+quantities; non-empty goods and need targets with positive components; immutable
+configuration access; permanent good identities; unordered recipe input
+multisets; exact equipment requirements; and the private-network, reader,
+fixed-slot, generated-connection architecture. Adjacent good-run overflow still
+panics in every build; search must respect that boundary. The initial design
+also retains global technological knowledge and independent satisfaction of
+all matching needs by one consumed good. Changing either requires an explicit
+later experiment. Taste drift is outside this design.
+
+## The implemented boundary
+
+These distinctions matter because some earlier descriptions have fallen behind
+the source. The source links identify the basis for this review; proposed
+experiments have not been run.
+
+| Area | What exists now | Consequence for the design |
+| --- | --- | --- |
+| [Goods and recipes](src/market/mod.rs) | Validated, canonical good registration; 256 raw unit designs; conserved recipes for one output unit; process registration. | Registration creates knowledge, not stock. Registered processes are not yet proven feasible or executable. |
+| [Process requirements](src/market/recipes.rs) | Workers, duration, exact equipment, consumables, and inefficiency inputs. Zero workers and zero duration are accepted. | These are descriptions, not a technological constraint system or job scheduler. |
+| [World generation](src/world/generate.rs) | Seeded deposits independent of the population RNG stream; accessible starting material at the first spawn tile. | Extraction, regeneration, movement, and economy-wide reachability remain absent. Deposit gear is an abstract number, not equipment. |
+| [Needs and survival](src/entity/mod.rs) | Each update adds recovery linearly; any need at or above `1.0` makes the entity dead. | Recovery is not bounded. Survival already affects the simulation and needs an explicit policy now. |
+| [Tick and social machinery](src/village.rs) | Recovery and pruning precede social reading; new acquaintances receive generated heads; actions use a money snapshot. | The default recovery rate is `0.05` from zero: people reach the death threshold on tick 20 with no satisfaction path. |
+| [Neural readers](src/nfn/monomial.rs) | Canonicalized pooled features, private affine parameters, and tests of selected symmetry transformations. | These tests establish useful invariances, not behavioral understanding. There is no objective-driven training or evolutionary selection loop. |
+| [Clients](../../apps/town-hall-cli/src/main.rs) and [dashboard](../town-hall-gui/src/lib.rs) | Native clients run `Village`; the browser runs a separate scripted preview. | Browser activity is not evidence about the native economy. Current displays lack decision and accounting explanations. |
+
+The [workspace README](../../README.md) says there are no death rules; the live
+code and pruning tests say otherwise. The comment above `baseline_person_needs`
+also says roughly 1,000 updates, inconsistent with `0.05`. Resolve this
+source/documentation disagreement before interpreting longer runs. The issues
+below describe current behavior rather than treating those statements as
+implemented guarantees.
+
+## Decisions that determine whether the model works
+
+### D01 — Choose the first claim to demonstrate, and make it survivable
+
+**Critique.** The earlier list made almost every subsystem equally essential.
+That encourages building breadth before discovering whether the central
+mechanisms work. The current default population also disappears before any
+future production or learning experiment could reasonably be interpreted.
+
+**Direction.** Start with a small native scenario in which a person repeatedly
+extracts material, makes a structured good, consumes it, and gains more useful
+satisfaction per scarce input than through an available raw substitute. Then
+introduce a second person with a complementary opportunity and demonstrate a
+mutually useful exchange. A diagnostic controller may establish feasibility;
+the private neural controllers must later achieve the same task through the
+same action and observation boundaries.
+
+Define a tick's duration before calibrating recovery or labor. A candidate
+bounded recovery law is `h' = 1 - (1 - h) * exp(-r * dt)`, with `r` expressed per
+unit time. It composes consistently across time subdivisions when there are no
+intervening events. Starting below one, it approaches one asymptotically, so
+mortality needs its own rule instead of depending on numerical rounding.
+
+Choose explicitly between a nonlethal experimental preset and a separately
+specified survival rule with a reachable consumption path. Do not silently
+retain unavoidable extinction, grant unexplained satisfaction, or infer
+successful selection from everyone dying together.
+
+**Evidence needed.** Several complete demand/recovery cycles, a material
+ledger, and a trace of why production beats the available alternative. No
+market, learning, or survival claim should depend on an empty population.
+
+### D02 — Make the resource geometry economically informative
+
+**Critique.** `DIMENSIONS = 8` divides eight ID bits into eight binary axes.
+The resources are the 256 vertices of a cube, and squared resource distance is
+Hamming distance divided by eight. That is a particular coarse geometry, not a
+densely sampled continuous material space. With equal axis weights, the current
+baseline ideal `[0.5; 8]` is at normalized Euclidean distance `0.5` from every
+resource. It cannot express a material preference under that comparison.
+
+[PropertyPoint](src/market/resources.rs) accepts any finite coordinates. The
+future target metric must therefore specify coordinate units and whether
+out-of-range ideals deliberately represent unattainable desires. Finiteness
+alone does not imply coordinates in `[0, 1]`.
+
+**Direction.** Define target coordinates in normalized property units, or
+document a different convention consistently. Generate inspectable clusters of
+noncentral ideal points. Compare the existing eight-axis lattice with build
+variants having four axes of four values or two axes of sixteen values, retaining
+all 256 resource identities within each experiment. Changing this interpretation
+requires recording the geometry version; an ID's meaning cannot change inside
+a saved world.
+
+**Evidence needed.** Histograms of attainable target distances and distinct
+rankings of substitutes, plus small examples of which dimensions change a
+choice. Report the best reachable match as well as the theoretical ideal:
+otherwise unavoidable lattice mismatch may masquerade as poverty or failed
+innovation. Use that ceiling as a diagnostic while keeping the satisfaction
+function fixed when availability changes.
+
+### D03 — Specify structural matching and the meaning of a dose together
+
+**Critique.** A distance formula quietly decides what manufacturing is for.
+If missing structure is cheap, raw units may dominate assembled products. If
+padding improves normalization, oversized goods may win. If each target run is
+one edit regardless of its quantity, storage encoding changes utility.
+
+**Direction.** Prototype a directional, order-preserving alignment of an ideal
+sequence to a good. Charge separately for property mismatch, missing target
+positions, and surplus material. Use the target's fixed size as the initial
+normalization reference and test the resulting size bias. Treat any proposed
+falloff, such as `exp(-distance / tolerance)`, as a hypothesis to compare, not a
+settled formula. Reversal and reordering must remain meaningful. Full triangle
+inequality is less urgent than consistent consumer rankings.
+
+Use tiny explicitly expanded sequences as a reference oracle. The eventual
+implementation must operate on compressed runs or enforce a disclosed search
+budget: one legal run can contain `u32::MAX` positions. Adjacent equal ideal runs
+must also give the same match whether written separately or together, even
+though `Need` currently preserves its supplied representation.
+
+Choose how one whole consumed object reduces intensity and how repeated objects
+saturate it. Internal quantity already participates in matching; multiplying
+utility by material size again needs justification. Retain the initial rule
+that one consumption can benefit multiple needs and measure its consequences.
+
+**Evidence needed.** A published set of tiny comparisons covering padding,
+repetition, missing components, run splitting, permutations, giant runs, and
+many small objects versus one assembled object. Raw material should sometimes
+be useful, while structural assembly should sometimes justify its cost.
+
+### D04 — Generate shared demand without prescribing the winning products
+
+**Critique.** Identical midpoint targets erase differentiation; independent
+random long targets may erase shared markets. Adding more similar needs also
+increases the value of multifunctional goods under the chosen satisfaction
+rule. A changing need count can become an accidental wealth or welfare bonus.
+
+**Direction.** Generate fixed lifetime targets from a small mixture of shared
+archetypes, with individual perturbations in ideal points and structure. Keep
+archetypes independent of registered goods and the future search algorithm.
+Treat targets, tolerances, recovery rates, and importance as separate controls.
+Initially vary few of them. Report target overlap and attainable satisfaction
+before running the economy.
+
+Define a utility scale and a value of retaining money. One possible purchase
+baseline compares the predicted reduction in weighted unmet needs with a
+wealth-dependent cost of spending; its coefficients must be reported. Evaluate
+marginal benefit after existing inventory and planned consumption, so several
+purchases cannot each claim the same unsatisfied need. Buying merely transfers
+ownership; consuming separately removes whole inventory units and changes need
+intensities. Saving, resale, equipment use, and production remain alternatives.
+
+**Evidence needed.** Cheap imperfect substitutes can beat expensive close
+matches; neighboring consumers share some purchases and disagree on others.
+Hold a person's total need importance fixed in a diagnostic duplication test
+to reveal how much apparent demand comes from representing one desire twice.
+Any later satisfaction-capacity rule should respond to an observed problem.
+
+### D05 — Give technology a landscape in which intermediates matter
+
+**Critique.** Material conservation permits every rearrangement of the same
+primitive totals. It does not make any rearrangement easy. If manufacturing cost
+depends only on final composition or size, intermediate goods may never help:
+producing directly from raw resources could always be as cheap. A simulation
+could then contain many recipes without a meaningful production network.
+
+**Direction.** Explore a small generative grammar of transformations over
+ordered configurations: joining sequences, exposing an internal boundary,
+reordering segments, and repeating an assembly operation. Assign irreducible
+work to transformations and let exact equipment unlock or cheapen particular
+operations. A prepared intermediate should preserve work that otherwise must
+be repeated. This grammar constrains feasible processes; it must not become a
+handwritten list of named industries.
+
+Separate the simulator's feasibility validator from an agent's costly discovery
+procedure. A recipe can conserve matter while lacking any feasible process.
+Candidate processes must obey lower bounds or trade-offs among labor, duration,
+consumables, equipment occupancy, and losses. Resource substitution can propose
+a different product, but a process cannot transmute primitive identities.
+Close or rebalance zero-cost transformation cycles as well as individual costs.
+
+**Evidence needed.** Find a tiny case where an intermediate lowers total work
+and another where making it is wasteful. An exhaustive search over a small
+bounded grammar should expose the available frontier; bounded agents should
+sometimes miss it. Do not make discovery easy by granting them that oracle.
+
+### D06 — Resolve the one-output rule before promising splitting or recycling
+
+**Critique.** `register_recipe` conserves inputs against exactly one output
+object. It can describe `50 × [(A, 1)] -> 1 × [(A, 50)]`. It cannot describe the
+reverse: an input of `[(A, 50)]` contains too much material for one output unit
+of `[(A, 1)]`. Thus the statement that splitting needs a recipe is an ontological
+rule; it is not yet an executable capability of this schema.
+
+**Direction.** Decide whether to retain one output object and explicitly defer
+splitting, or permit a positive integer output multiplicity for a single output
+`GoodId`. The latter is a promising small extension because it enables
+homogeneous disassembly without introducing arbitrary heterogeneous byproducts.
+It remains a proposal requiring a schema decision, not an implied implementation
+change. Fractional objects stay forbidden.
+
+Distinguish a recipe's integer transformation ratio from a process's practical
+batch. State whether proportionally identical input/output ratios share a
+recipe identity, which scale is the smallest legal execution, and which costs
+are fixed per batch. Equipment occupancy, workers, duration, and consumables
+must not all be assumed to scale in the same way.
+
+**Evidence needed.** If splitting is admitted, a combine/split round trip has
+exact primitive accounting and consumes real work. Partial batches, maximum
+quantities, and cancellation have defined outcomes. Multi-output waste recovery
+can wait until this simpler case is understood.
+
+### D07 — Turn deposits and process losses into a complete physical ledger
+
+**Critique.** A no-gear deposit on `(0, 0)` guarantees material at one place,
+not useful material or access for every person. Multi-resource deposits also
+leave extraction ambiguous: does a batch select one resource or recover a mix?
+The numeric `gear` field has no connection to exact equipment requirements.
+
+**Direction.** Begin with a declared access rule such as presence on the tile,
+finite depletion, and reserved extraction slots. Choose batch composition and
+what efficiency measures. A one-unit batch at 25% efficiency must not always
+produce zero merely because every execution rounds down; use a specified
+integer remainder mechanism or seeded stochastic yield. Account for the
+remainder physically: unavailable yield either stays in the deposit or enters
+an explicit sink, according to the chosen process.
+
+Restrict an initial scenario to no-gear extraction while designing the mapping
+from deposit requirements to feasible processes and exact tools. Do not silently
+turn an abstract gear level into a complete tool catalogue. Regeneration needs
+caps and a named external source of material; its current metadata does not
+supply either rule.
+
+Maintain a per-resource balance using mutually exclusive physical states:
+
+```text
+initial + external inflows = deposits + stock at rest + jobs + transit + sinks
+```
+
+Sinks record consumed or lost material. Ownership is tracked across the physical
+states. Reservations are locks on existing stock, not another copy of it.
+Consumables and inefficiency inputs must be additional debits even when they
+share a `GoodId` with embodied inputs.
+
+**Evidence needed.** Every primitive unit has a destination through extraction,
+manufacture, consumption, cancellation, and entity removal. Distinguish equality
+of accounting totals from a claim that usable material remains conserved.
+
+### D08 — Make time, labor, equipment, and location genuinely scarce
+
+**Critique.** A worker count and a duration do not allocate anyone's time.
+An owned machine cannot support unlimited simultaneous jobs. Giving all goods
+the owner's current location would also let a moving owner transport an entire
+warehouse instantly.
+
+**Direction.** Use person-producers for the first economy. A job records its
+owner, site, exact input reservations, assigned workers, equipment occupancy,
+start time, completion time, and cancellation policy. Start atomically, complete
+once, and prohibit ordinary zero-duration production initially. Self-employment
+uses the same scarce time budget as paid work; its opportunity cost first appears
+as forgone feasible activity rather than an invented money transfer.
+
+Represent physical location authoritatively for held, stored, reserved, and
+in-transit goods. A first scenario can restrict everything to one site. When
+movement arrives, give it duration and a carrying limit measured in primitive
+amount or a declared physical capacity measure, not just number of objects.
+Inputs, equipment, and workers must coexist at a production site for the
+required interval. A transfer of ownership does not move the object.
+
+Add a minimal wage contract before claiming a labor market: specify work time,
+payment timing, and who bears cancellation risk. Firms, skills, and equipment
+wear can follow after labor allocation and output ownership work.
+
+**Evidence needed.** Two jobs cannot spend the same worker, machine, or input;
+movement cannot duplicate location; a faster technique can lose to one with
+lower equipment occupancy when capacity is scarce.
+
+### D09 — Close a local cash market and make failed trades informative
+
+**Critique.** Similarity and intensity are not monetary prices. Starting money
+is currently 100 integer units per person, so denomination alone can constrain
+small transactions. A producer observing no sale cannot tell whether the
+problem was poor fit, poverty, no visibility, distance, or missing supply.
+
+**Direction.** Start with local posted offers for exact goods and quantities,
+backed by inventory reservations. Buyers choose affordable marginal purchases;
+sellers revise prices from observed offers, sales, and unsold stock. Specify
+partial fills, expiry, equal-price arbitration, and concurrent buying and
+selling. For the first version, trade only where delivery is already possible.
+Cash-only person-producers can establish exchange before firms or credit.
+
+Money must transfer among buyers, sellers, and workers. Spawning, death,
+saturation, fees, and external grants must have named ledger effects. The
+current `Give` adapter clips recipient balances at `u64::MAX`, which can discard
+money; pruning also removes balances from `total_money`. Neither behavior can
+remain an unexplained monetary event in an economic experiment. Use checked
+settlement and reject or reduce an overflowing transfer before debiting it.
+
+Give producers observable market signals with a stated information budget.
+Keep private targets available to the analyst without automatically exposing
+them to producers. Record why an offer was rejected; distinguish access,
+affordability, suitability, and reservation failures in diagnostics.
+
+**Evidence needed.** A closed economy circulates purchasing power across
+several cycles. Changing all monetary denominations consistently leaves choices
+approximately unchanged except for documented integer rounding. Wealth changes
+reconcile to transfers and explicit sources or sinks.
+
+### D10 — Extend snapshot semantics to a complete transaction boundary
+
+**Critique.** Generated heads are staged before actions, which is good causal
+hygiene. But `step` already updates needs and prunes entities before a possible
+evaluator error. An error is therefore not equivalent to an unchanged tick;
+retrying can apply recovery twice. Future jobs and market reservations make this
+boundary more consequential.
+
+**Direction.** Specify phases. A candidate sequence is: complete previously due
+jobs and arrivals; apply recovery; freeze observations; generate social updates
+and action intents; arbitrate claims; commit trades, consumption, job starts,
+and departures; apply the chosen survival and estate rules; publish the tick.
+Under this proposal a person may respond to current need before a survival
+check, unlike today's ordering. New jobs take at least one tick. Proceeds from
+this tick should not fund additional intents unless a later funding phase is
+explicitly designed.
+
+Use stable entity identities and a recorded seeded or rotating priority rule
+for equal claims. Determinism alone does not establish fairness: always choosing
+the lowest ID systematically favors early spawns. Once the rules are fixed,
+permuting storage rows should not change settlement.
+
+Choose either staged commit with a reliable retry boundary or explicit failed
+session/checkpoint recovery. Document which changes become committed if neural
+evaluation or validation fails; never automatically retry a partially applied
+tick as though nothing happened.
+
+**Evidence needed.** Conflicting buys, consumption, extraction, and production
+cannot double-spend. Injected failures, cancellations, and removals preserve
+accounting and aligned population/network rows.
+
+### D11 — Define what adapts, how it improves, and what is inherited
+
+**Critique.** “Learn replacements” currently means feeding a candidate network
+through a reader and get-to-know network, then installing their outputs. Those
+networks start random. Mutation accessors exist, but no reward, selection,
+training, reproduction, or credit assignment connects outcomes to better
+parameters. Changing connections alone is not evidence of improvement.
+
+**Direction.** First build an experimental adaptation loop around a small,
+solvable task. A reasonable starting candidate is population-based mutation and
+selection across repeated episodes, retaining private action networks, readers,
+and get-to-know networks. Compare it with frozen random controls on held-out
+seeds. This is an evaluation proposal, not a requirement that simulated people
+reproduce biologically or that all learning be evolutionary.
+
+Separate inherited/base policy parameters from heads installed through personal
+acquaintance. Decide whether acquired social connections survive reset,
+selection, or reproduction; copying them blindly also copies local slot
+meanings. Respect f16 storage when sizing mutations, so proposed changes do not
+all round away or overflow.
+
+Choose person-level objectives deliberately. Realized need relief over time,
+effort, viability, and retained options are candidates; cash alone would make
+wealth accumulation the definition of success. Log wealth and unmet needs
+separately even if the controller optimizes one scalar. Delayed production
+returns need an evaluation horizon long enough to reward investment.
+
+**Evidence needed.** Adaptation improves a specified outcome over frozen brains
+and a simple controller with the same information and actions. Reader and
+get-to-know adaptation must have a measurable contribution beyond action-brain
+adaptation alone. Report failures across seeds, not just the best lineage.
+
+### D12 — Distinguish social attention from a built-in wealth hierarchy
+
+**Critique.** Every entity currently seeks the globally richest 200 others;
+equal wealth is broken by `EntityId`. With equal starting balances, early IDs
+therefore attract attention without demonstrating competence. At populations
+above 201, the graph is strongly concentrated by construction. At populations
+of 201 or fewer, everyone can fit, hiding this effect.
+
+The observation boundary is also unusual: own aggregate resources, global
+deposited material, known people's money, and a candidate's full action network.
+Reading policy weights does not reveal its current private observations or
+prove knowledge of its motives. Retained acquaintances are not reread just
+because their brains changed through other slot replacements.
+
+**Direction.** Keep the current ranking as an explicit baseline. Test alternative
+candidate-selection rules only as named ablations within the fixed 200-slot
+architecture: local encounters, observed productive activity, and a mixture of
+familiar contacts with bounded exploration. Define which facts are public and
+which require an encounter; global technology knowledge does not settle this.
+
+Decide whether social heads are first impressions or maintained estimates. If
+maintained, schedule refreshes by age, prediction error, or brain revision under
+a fixed attention budget. Preserve the stable snapshot when several people
+reread one another; do not iterate to an implicit social fixed point mid-tick.
+
+**Evidence needed.** Compare attention concentration with wealth, production,
+and useful cooperation. A rich but unproductive agent and a cash-poor producer
+should expose what the observation rule rewards. Test at least one population
+above the slot threshold, and report acquaintance turnover and stale readings.
+
+### D13 — Test whether the reader preserves useful behavioral distinctions
+
+**Critique.** Hidden-symmetry invariance is necessary for the intended reader,
+but pooling can also collapse different policies. The middle layers contribute
+only weight and bias means. Reading every parameter does not preserve every
+relationship among parameters. Moreover, each observer applies only affine
+transforms before averaging: in exact arithmetic, `mean(a*x+b) = a*mean(x)+b`.
+Private affines cannot recover information that those means discarded.
+
+There is another coordinate question: a candidate's social slot 17 refers to
+that candidate's acquaintance, not the observer's slot 17. Hidden-neuron
+invariance does not resolve social input/output meanings across people.
+
+**Direction.** Pair symmetry tests with discrimination tests. Construct
+functionally equivalent networks, clearly different policies, and policies with
+similar pooled summaries but different responses on the same legal observations.
+Measure held-out behavior prediction and subsequent economic decisions. Test
+consistent relabeling of social slots, occupants, inputs, and target heads;
+decide what additional slot context or alignment the reader requires.
+
+If the current pooling fails these tests, investigate a small richer statistic
+or bounded behavioral probes before a wholesale reader replacement. Probes must
+use observations legitimately available in the chosen experiment. Existing
+Monomial invariances remain acceptance requirements.
+
+**Evidence needed.** The reader distinguishes economically different behavior
+while ignoring equivalent parameterizations. Compare against money-only,
+behavior-history, and shuffled-reading controls under comparable information
+and compute budgets. Call a useful result prediction or coordination until a
+stronger interpretation is supported.
+
+### D14 — Connect an unbounded economy to a bounded action interface
+
+**Critique.** Enumerating one output per good, price, quantity, recipe, and
+location cannot scale with invention. Conversely, an adapter that selects the
+best purchase or manufacturing plan on an agent's behalf can conceal all the
+intelligence outside its private network. Current aggregate inventory inputs
+also hide which materials or useful goods a person owns. Neither need
+intensities nor product configurations reach the current action inputs.
+
+**Direction.** Explore bounded menus of legal economic intents generated from
+local observations. Candidate records can include a proposed good or job,
+price or resource cost, duration, location, need-match information available to
+that agent, and the relevant social slot. Reserve some candidate budget for
+exploration, so retrieval does not permanently erase unfamiliar products.
+
+Define who generates parameters, who ranks candidates, and how selected intents
+map into the action network and generated social heads. Preserving the current
+fixed network shape constrains this encoding; any proposed shape or semantic
+change needs a coordinated schema decision across constants, readers,
+get-to-know outputs, connection installation, and saved brains. Do not casually
+repurpose social slots as product IDs.
+
+The environment may reject illegal actions and enforce reservations. Economic
+choices should remain attributable to the controller. A diagnostic heuristic
+must be labeled and evaluated separately even when it uses the same executor.
+
+**Evidence needed.** Candidate recall on a tiny exhaustively enumerable market,
+decisions explained from actual observations, and a stable interface when new
+`GoodId`s appear. Report how much performance comes from retrieval versus policy.
+
+### D15 — Make invention costly, reachable, and capable of surprising us
+
+**Critique.** An enormous configuration space is not itself innovation.
+Unconstrained random search mostly creates irrelevant designs; direct access to
+all private targets would make successful discovery nearly automatic. With
+global technological knowledge, discovery also benefits competitors immediately,
+so the private return to experimentation needs investigation.
+
+**Direction.** Keep unregistered candidates temporary. Distinguish a proposed
+design, a conserved recipe, a feasible process, a process reachable with current
+stocks, a manufactured prototype, and a commercially useful product. Current
+registration already permits goods without recipes and recipes without
+processes; those states are legitimate, but they must be labeled correctly.
+Give search a stated labor, material, or evaluation budget.
+
+Explore mutations around actually used products, failed orders, production
+bottlenecks, and reusable subsequences. Allow cost-reducing imperfect substitutes,
+not only closer matches. Track which signal caused a candidate to be tried.
+Separate product search from recipe search and process improvement, and compare
+them under equal budgets. Temporary candidate indexes can prune computation;
+permanent IDs must never be recycled or make identity depend on a hash score.
+
+Check reachability using consumed inputs, durable equipment, locations, and
+quantities together. Permit useful cycles when seed stocks make them executable;
+a topological ban would exclude legitimate maintenance or recycling. Apparent
+graph connectivity is not enough when two paths compete for the same inventory.
+
+**Evidence needed.** An affordable imperfect invention wins, a technically valid
+but unbootstrappable invention remains unused, and a useful discovery sometimes
+benefits other producers. Report successful use and welfare gain per search
+budget, not just growth of the permanent registry.
+
+### D16 — Budget computation around the actual social workload
+
+**Critique.** Current private action and get-to-know networks contain 53,114 f16
+parameters per entity, or 106,228 bytes before other state. At 50,000 people
+that is about 5.31 GB of network parameters alone. Initial acquaintance setup can
+require 10 million readings and generated bundles. The 72 f32 values in each
+bundle alone total 2.88 GB, excluding `Option` overhead, replacement plans,
+reader scratch space, device copies, and activations. Bounded GPU evaluation
+does not bound all host-side work or memory.
+
+**Direction.** Measure initial setup, steady ticks, and high acquaintance
+turnover separately. Run small economic experiments before using population
+size as a quality signal. Record time spent in reading, get-to-know evaluation,
+action evaluation, candidate retrieval, and economic settlement.
+
+A specific optimization deserves investigation: the current reader's
+canonicalization depends on the observed brain, not the observer. Its subsequent
+affine pooling can be factored into shared canonical summaries plus private
+affines. Cache summaries once per observed brain revision and frozen snapshot;
+then apply observer-specific transforms. This follows from the current formula,
+but rearranging floating-point operations needs numerical and decision-level
+comparison. A future richer reader may not permit the same factorization.
+
+Keep economic caches keyed by stable designs and metric versions, with bounded
+active indexes and archival retention of permanent identities. Search limits
+and approximation quality belong in experiment records. Streaming or recomputing
+pending heads is another option only if every reader still observes the same
+unchanged brain pool.
+
+**Evidence needed.** Peak host and device memory, first-tick cost, steady-state
+cost, and behavior under a turnover spike. CPU/GPU agreement must include chosen
+actions near tied logits; small numerical discrepancies can produce different
+long-run trajectories. The existing GPU comparison tests are explicitly ignored
+unless a Vulkan device and loader are available.
+
+## A sequence of experiments with stopping conditions
+
+Advance when each experiment explains its result. Failure is useful evidence
+about a rule; adding realism is not a substitute for understanding the failure.
+
+| Experiment | Minimal setup and intervention | Evidence required before expanding |
+| --- | --- | --- |
+| **1. Geometry and structure** | A few explicit resources, targets, and products; exhaustive tiny alignments; padding and run-encoding adversaries. | Sensible substitution rankings, structural assembly sometimes worth doing, equivalent encodings agree, large legal quantities handled safely. |
+| **2. A complete physical loop** | One site, a few people, declared survival preset, no-gear extraction, one feasible assembly path, whole-object consumption. | Repeated need relief, exact material accounting, occupied labor/equipment, and no reliance on hidden grants. |
+| **3. Useful exchange** | Two different fixed need profiles or production opportunities, local cash offers, then one paid labor task. | Both parties can benefit relative to feasible self-production; balances reconcile; failed trades have interpretable reasons. |
+| **4. Invention and capital** | Equal search budgets, a reusable intermediate and optional equipment path, then change input scarcity. | Agents discover a useful alternative; some investment pays back and some does not; availability and capacity matter. |
+| **5. Social contribution** | The same economy with adaptive and frozen controllers, correct and shuffled readings, retained and refreshed impressions. | Reader-dependent improvement survives held-out seeds and fair controls; costs and information privileges are reported. |
+| **6. Geography and scarce attention** | Two separated sites with complementary resources, costly transport, and a population above 201. | Local scarcity affects choices; delivery cannot teleport; attention effects can be separated from the richest-person rule. |
+
+For every experiment save the configuration, code revision and working-tree
+changes, world/population/search seeds, geometry and metric versions, tick
+semantics, controller variant, and backend. Separate deterministic random streams
+by subsystem and stable identities where possible; adding a world-generation
+draw should not silently change someone's initial brain. Report distributions
+across seeds and parameter neighborhoods. A striking trajectory is a case study,
+not yet evidence of a robust mechanism.
+
+The first useful dashboard should answer: why this consumption, why this offer,
+why this process, why this failed job, and why this acquaintance? Show unmet
+needs, realized satisfaction, primitive stocks and sinks, occupied capacity,
+failed requests, search cost, and active products alongside money. A treasury
+balance or count of `GoodId`s alone is a poor measure of economic success.
+
+## High-potential directions tied to this model
+
+These are research hypotheses enabled by the foundations, not promises that the
+current scaffold already produces the phenomena.
+
+**Reusable intermediates as an emergent technology vocabulary.** Let the
+transformation grammar reward reusing prepared sequences. Ask whether a small
+set of intermediates becomes useful across unrelated final products, without
+naming those intermediates as special parts. Remove one widely used design in
+a controlled replay and measure lost feasible production, substitution, and
+recovery time. Compare with removing the same primitive quantity elsewhere to
+distinguish structural dependence from simple material scarcity.
+
+**Equipment that creates a new set of opportunities.** A capital good is
+interesting when it makes many otherwise impractical transformations viable.
+Measure the additional reachable processes and useful products created by one
+piece of equipment, under the same labor and material budget. This could reveal
+why a tool acquires value before its own direct consumption value is significant.
+Avoid rewarding the number of syntactically different recipes it unlocks.
+
+**Social connections as productive investment.** Use bounded refresh and
+encounter budgets to ask whether an acquaintance saves failed transactions,
+reveals complementary production, or improves demand prediction. Compare its
+benefit with the cost of acquiring and maintaining the connection. This would
+give the reader architecture an economic role beyond transferring money toward
+already visible wealth.
+
+**Discovery as a shared benefit with a private cost.** Retain global knowledge
+and let one producer pay for a prototype that others can use. Test whether early
+sales, installed equipment, or production experience provide enough private
+return to sustain discovery. If invention stalls while society would benefit,
+that is a result worth examining before adding patents, subsidies, or secrecy.
+
+**Regional styles with fixed tastes.** Correlate initial need archetypes within
+regions while generating material abundance independently. Vary transport cost
+and examine whether similar desires produce different locally viable products,
+and whether trade converges toward common designs. Targets remain fixed;
+product availability, scarcity, and coordination supply the dynamics.
+
+**Competing production histories for the same physical good.** Different
+recipes and processes can reach one exact configuration. First study whether
+reliability, delivery, and cost produce different seller outcomes without
+changing the good's identity. Later attach explicit batch provenance for
+reputation or ethical preferences. This can separate physical value from the
+value of knowing how and by whom something was made.
+
+**Resilience as an outcome of invention.** After a stable baseline, remove a
+material source, machine, or important producer in paired seeded runs. Compare
+stored inventory, alternative recipes, substitute products, and new social
+contacts as recovery mechanisms. Track unmet needs during recovery, not merely
+the eventual return of total output. Shocks should reveal existing dependencies,
+not supply the only interesting dynamics in the simulation.
+
+## Keep these questions visible, but sequence them deliberately
+
+The earlier backlog contained useful ideas that should survive consolidation.
+The gate below says when a topic becomes informative, rather than dismissing it
+as permanently optional.
+
+| Topic | Gate and design constraint |
+| --- | --- |
+| Context-dependent property weights and need tolerances | First understand the common metric. Keep specificity separate from importance and test normalization effects. |
+| Durable goods, rental, maintenance, wear, and replacement | First establish equipment occupancy and disposable consumption. Recurring service has capacity; it cannot grant unlimited satisfaction merely through ownership. |
+| Byproducts, recycling, and ecological regeneration | First settle output multiplicity and primitive sinks. Regeneration needs capacities and explicit sources; recovery always requires a feasible process. |
+| Storage, spoilage, defects, and physical degradation | First establish locations and inventories. A changed physical configuration is another `GoodId`; do not hide physical quality variation inside fungible units. |
+| Transport industries, infrastructure, terrain, and land rights | First demonstrate scarcity with simple costly movement. Sites and rights are separate assets, not resource configurations. |
+| Firms, cooperatives, skills, scale economies, and learning by doing | First close person-production and wages. Represent setup costs or acquired capability explicitly; avoid unexplained productivity bonuses. |
+| Credit, investment, default, contracts, services, and multiple currencies | First reconcile cash, ownership, and long-lived jobs. Financial and service claims need their own semantics rather than pretending to be physical goods. |
+| Harm, health, births, inheritance, and organizational continuity | Resolve current survival immediately under D01. Add richer demography after sustained supply and estate accounting; specify ownership before removing an entity. |
+| Local technological knowledge, reputation, brands, and provenance | Start from global technology knowledge. Treat local knowledge as an explicit later experiment; keep physical identity separate from history and seller identity. |
+| Satisfaction allocation and evolving tolerances | Measure the chosen independent multi-need benefit first. Any change must leave lifetime targets fixed and be distinguishable from a change of utility scale. |
+| Alternative market protocols and equipment compatibility | Compare against one working market. Similar equipment requires another feasible process or an explicit capability rule, never automatic consumer-distance substitution. |
+| Compact preference seeds, archives, saved worlds, and ID widths | Add storage optimizations after profiling. Preserve target determinism and permanent IDs; checkpoint formats must record rule and geometry versions. |
+| Names, interpretation tools, and experiment presets | Basic causal diagnostics and reproducible small scenarios are essential now. Rich labels and polished sweep tools follow; names must not determine behavior. |
+
+A useful decision record for each issue is short: the chosen rule, the rejected
+alternative, the smallest example on which they differ, the evidence that would
+change the choice, and the rule's version in saved experiments. This will make
+future unresolved notes a record of what the model has taught us as well as what
+we still need to build.

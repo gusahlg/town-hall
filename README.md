@@ -7,13 +7,24 @@ neural/social decision architecture.
 
 The 256 primitive resources are flat `u8` IDs that each compactly encode one
 point of an N-dimensional property lattice; coordinates and normalized geometric
-similarity are derived from the ID rather than stored. Goods are canonical
-ordered resource-and-quantity configurations stored once in an append-only
-registry. Inventories contain only stable `GoodId`s and quantities.
+similarity are derived from the ID rather than stored. Goods are exact ordered
+resource sequences stored as run-length encoded `(ResourceId, Quantity)` pairs
+in an append-only registry. Adjacent identical runs merge before registration:
+`[(A, 3), (A, 2)]` and `[(A, 5)]` share one `GoodId`, while separated runs in
+`[(A, 3), (B, 1), (A, 2)]` retain their positions. Configurations must be non-empty
+and all quantities positive. A merged run exceeding `u32::MAX` panics, including
+in release builds; normalization never allocates the expanded sequence.
 
-Needs are ordered configurations of ideal property points and quantities. Recipes
-use canonical unordered input multisets and registration enforces flattened
-primitive-material conservation. Processes record workers, time, exact equipment,
+Inventories contain stable `GoodId`s and counts of separate objects. Fifty units
+of `[(A, 1)]` and one unit of `[(A, 50)]` remain different holdings; combining or
+splitting goods requires a recipe and a feasible process.
+
+Needs have non-empty ordered targets of ideal property points and positive
+quantities. Targets are private, accessible through `Need::target()`, and fixed
+for an entity's lifetime; intensity is separate mutable state.
+
+Recipes use canonical unordered input multisets, and registration enforces
+flattened primitive-material conservation. Processes record workers, time, exact equipment,
 supporting consumables, and extra inputs lost to inefficiency.
 
 The world is a seeded tile grid containing primitive deposits, and every entity

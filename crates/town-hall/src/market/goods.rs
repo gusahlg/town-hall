@@ -24,23 +24,46 @@ impl GoodId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Component {
     pub resource: ResourceId,
-    /// Primitive units embodied at this position in one unit of the good.
+    /// Number of consecutive copies of this resource in one unit of the good.
     pub quantity: Quantity,
 }
 
-/// One exact ordered physical configuration. Component boundaries, order, and
-/// quantities are identity: configurations are never flattened or combined for
-/// `GoodId` deduplication.
+/// An exact ordered resource sequence, stored as runs of identical resources.
+/// Adjacent identical runs are merged: `[(A, 3), (A, 2)]` and `[(A, 5)]`
+/// identify the same good. Separated runs and resource order remain significant.
+/// Every configuration is non-empty and every run has a positive quantity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Good {
     configuration: Box<[Component]>,
 }
 
 impl Good {
-    pub(crate) fn new(configuration: impl Into<Box<[Component]>>) -> Self {
-        Self {
-            configuration: configuration.into(),
-        }
+    pub(crate) fn new(mut configuration: Vec<Component>) -> Result<Self> {
+        ensure!(
+            !configuration.is_empty(),
+            "good configuration must be non-empty"
+        );
+        ensure!(
+            configuration.iter().all(|component| component.quantity > 0),
+            "good component quantities must be positive"
+        );
+
+        // Compact the runs in place without expanding primitive positions.
+        // dedup_by passes the later element first and keeps the earlier one.
+        configuration.dedup_by(|later, earlier| {
+            if later.resource != earlier.resource {
+                return false;
+            }
+            assert!(
+                earlier.quantity <= Quantity::MAX - later.quantity,
+                "adjacent resource run quantity exceeds u32::MAX"
+            );
+            earlier.quantity += later.quantity;
+            true
+        });
+        Ok(Self {
+            configuration: configuration.into_boxed_slice(),
+        })
     }
 
     #[inline]
@@ -76,9 +99,8 @@ pub struct GoodAmount {
     pub quantity: Quantity,
 }
 
-/// Owned counts of exact goods. Inventory multiplicity never changes a good's
-/// internal configuration: fifty units of `[(A, 1)]` remain fifty objects, not
-/// one unit of `[(A, 50)]`.
+/// Owned counts of separate goods. Fifty units of `[(A, 1)]` remain fifty
+/// objects; combining them into one unit of `[(A, 50)]` requires production.
 #[derive(Debug, Clone, Default)]
 pub struct Inventory {
     quantities: BTreeMap<GoodId, Quantity>,
